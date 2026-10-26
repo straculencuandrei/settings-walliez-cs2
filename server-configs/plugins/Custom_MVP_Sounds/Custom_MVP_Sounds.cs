@@ -11,9 +11,12 @@ namespace Custom_MVP_Sounds;
 using Custom_MVP_Sounds.Config;
 using CounterStrikeSharp.API.Core.Attributes.Registration;
 using CounterStrikeSharp.API.Modules.Commands;
+using System.IO;
 
 public class CustomMVPSounds : BasePlugin
 {
+    private readonly Dictionary<ulong, DateTime> _refreshCooldowns = new();
+
     private string GetMvpSettingsPath()
     {
         string p1 = Path.Combine(ModuleDirectory, "config/MVP_Settings.json");
@@ -23,6 +26,137 @@ public class CustomMVPSounds : BasePlugin
         string p3 = Path.Combine(ModuleDirectory, "../../plugins/MVP-Sounds-GoldKingZ/config/MVP_Settings.json");
         if (File.Exists(p3)) return p3;
         return p1;
+    }
+
+    public void OnCommandSoundRefresh(CCSPlayerController? player, CommandInfo info)
+    {
+        if (player == null || !player.IsValid || player.IsBot || player.IsHLTV) return;
+
+        var steamId = player.SteamID;
+        if (_refreshCooldowns.TryGetValue(steamId, out var nextAllowed) && DateTime.UtcNow < nextAllowed)
+        {
+            var remaining = Math.Ceiling((nextAllowed - DateTime.UtcNow).TotalSeconds);
+            Helper.AdvancedPrintToChat(player, "{gold}[MVP] {grey}| {darkred}Please wait {0}s before refreshing again.", remaining);
+            return;
+        }
+
+        _refreshCooldowns[steamId] = DateTime.UtcNow.AddSeconds(3);
+
+        Task.Run(async () =>
+        {
+            string chosenKit = string.Empty;
+            bool isMuted = false;
+            bool foundData = false;
+
+            // 1. Try reading from MySQL PersonData table (same db used by mvpz.walliez.xyz)
+            try
+            {
+                string mysqlPath = Path.Combine(ModuleDirectory, "config/MySql_Settings.json");
+                if (File.Exists(mysqlPath))
+                {
+                    var connectionSettings = JsonConvert.DeserializeObject<MySqlDataManager.MySqlConnectionSettings>(await File.ReadAllTextAsync(mysqlPath));
+                    if (connectionSettings != null && !string.IsNullOrEmpty(connectionSettings.MySqlHost) && connectionSettings.MySqlHost != "your_mysql_host")
+                    {
+                        var connectionString = new MySqlConnectionStringBuilder
+                        {
+                            Server = connectionSettings.MySqlHost,
+                            Port = (uint)connectionSettings.MySqlPort,
+                            Database = connectionSettings.MySqlDatabase,
+                            UserID = connectionSettings.MySqlUsername,
+                            Password = connectionSettings.MySqlPassword
+                        }.ConnectionString;
+
+                        using var connection = new MySqlConnection(connectionString);
+                        await connection.OpenAsync();
+                        var dbData = await MySqlDataManager.RetrievePersonDataByIdAsync(steamId, connection);
+                        if (dbData != null && dbData.PlayerSteamID != 0)
+                        {
+                            chosenKit = dbData.MusicKit ?? string.Empty;
+                            isMuted = dbData.Client_Mute_MVP;
+                            foundData = true;
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[MVP Refresh] MySQL note: {ex.Message}");
+            }
+
+            // 2. If not found in MySQL, check Cookies/MVP_Sounds_Cookies.json
+            if (!foundData)
+            {
+                try
+                {
+                    var cookieData = Helper.RetrievePersonDataById(steamId);
+                    if (cookieData != null && cookieData.PlayerSteamID != 0)
+                    {
+                        chosenKit = cookieData.MusicKit ?? string.Empty;
+                        isMuted = cookieData.Client_Mute_MVP;
+                        foundData = true;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[MVP Refresh] Cookie note: {ex.Message}");
+                }
+            }
+
+            // 3. Queue update on main game thread
+            Server.NextFrame(() =>
+            {
+                if (player == null || !player.IsValid) return;
+
+                // Update mute status in RAM
+                if (isMuted)
+                {
+                    Globals.client_mute[steamId] = true;
+                }
+                else
+                {
+                    Globals.client_mute.Remove(steamId);
+                }
+
+                // Clean kit string
+                if (chosenKit == "Unequip MVP Sound" || chosenKit == "Disable All MVP Sounds")
+                {
+                    chosenKit = string.Empty;
+                }
+
+                // Update chosen MVP in RAM
+                if (!string.IsNullOrEmpty(chosenKit))
+                {
+                    Globals.Choosed_MVP[steamId] = chosenKit;
+
+                    // Sync local cookie file
+                    Helper.SaveToJsonFile(steamId, chosenKit, isMuted, DateTime.Now);
+
+                    // Resolve display name from MVP_Settings.json
+                    string displayName = chosenKit;
+                    try
+                    {
+                        string jsonFilePath = GetMvpSettingsPath();
+                        if (File.Exists(jsonFilePath))
+                        {
+                            var settings = JsonConvert.DeserializeObject<Dictionary<string, Dictionary<string, string>>>(File.ReadAllText(jsonFilePath));
+                            if (settings != null && settings.TryGetValue(chosenKit, out var kitDict) && kitDict.TryGetValue("MVP_Kit_Name", out var name))
+                            {
+                                displayName = name;
+                            }
+                        }
+                    }
+                    catch { }
+
+                    Helper.AdvancedPrintToChat(player, "{gold}[MVP] {grey}| {white}Anthem Refreshed from site: {gold}{0}", displayName);
+                }
+                else
+                {
+                    Globals.Choosed_MVP.Remove(steamId);
+                    Helper.SaveToJsonFile(steamId, string.Empty, isMuted, DateTime.Now);
+                    Helper.AdvancedPrintToChat(player, "{gold}[MVP] {grey}| {white}MVP Anthem is currently {darkred}unequipped{white}.");
+                }
+            });
+        });
     }
 
     public void OpenMvpMenu(CCSPlayerController Player)
@@ -126,6 +260,8 @@ public class CustomMVPSounds : BasePlugin
         AddCommand("css_mvp", "Open MVP Menu", (p, info) => { if (p != null && p.IsValid) OpenMvpMenu(p); });
         AddCommand("mvp", "Open MVP Menu", (p, info) => { if (p != null && p.IsValid) OpenMvpMenu(p); });
         AddCommand("anthem", "Open MVP Menu", (p, info) => { if (p != null && p.IsValid) OpenMvpMenu(p); });
+        AddCommand("css_sr", "Refresh MVP anthem from website", (p, info) => { if (p != null && p.IsValid) OnCommandSoundRefresh(p, info); });
+        AddCommand("sr", "Refresh MVP anthem from website", (p, info) => { if (p != null && p.IsValid) OnCommandSoundRefresh(p, info); });
 
     }
     private HookResult OnRoundStart(EventRoundStart @event, GameEventInfo info)
@@ -283,6 +419,19 @@ public class CustomMVPSounds : BasePlugin
         if (string.IsNullOrWhiteSpace(message)) return HookResult.Continue;
 
         string trimmedMessage = message.Trim();
+
+        // /sr command (same behavior as /wp for skins)
+        if (trimmedMessage.Equals("!sr", StringComparison.OrdinalIgnoreCase) ||
+            trimmedMessage.Equals("/sr", StringComparison.OrdinalIgnoreCase) ||
+            trimmedMessage.Equals("!refreshmvp", StringComparison.OrdinalIgnoreCase) ||
+            trimmedMessage.Equals("/refreshmvp", StringComparison.OrdinalIgnoreCase) ||
+            trimmedMessage.Equals("!mvprefresh", StringComparison.OrdinalIgnoreCase) ||
+            trimmedMessage.Equals("/mvprefresh", StringComparison.OrdinalIgnoreCase))
+        {
+            OnCommandSoundRefresh(player, info);
+            return HookResult.Continue;
+        }
+
         string[] MVPInGameMenu = Configs.GetConfigData().MVP_InGameMenu.Split(',');
         if (MVPInGameMenu.Any(cmd => cmd.Equals(trimmedMessage, StringComparison.OrdinalIgnoreCase)))
         {
