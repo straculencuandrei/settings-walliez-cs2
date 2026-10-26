@@ -1,0 +1,13 @@
+import paramiko
+
+ssh = paramiko.SSHClient()
+ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+ssh.connect("81.181.113.120", port=22, username="root", password=")(e092e8EjTUiV")
+
+script = """
+find /home/csgoserver/server-cs2/ -name "*stiu*" -o -name "*gta_iii*"
+"""
+stdin, stdout, stderr = ssh.exec_command(script)
+print("=== SOUND FILES ON SERVER ===")
+print(stdout.read().decode('utf-8', errors='ignore'))
+ssh.close()

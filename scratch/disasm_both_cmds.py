@@ -8,13 +8,9 @@ cmd = """
 python3 -c '
 import subprocess
 out = subprocess.check_output(["objdump", "-d", "-C", "/home/csgoserver/server-cs2/game/csgo/addons/counterstrikesharp/bin/linuxsteamrt64/counterstrikesharp.so"]).decode("latin-1")
-idx1 = out.find("IssueClientCommand(")
-print("=== IssueClientCommand ===")
-print(out[idx1:idx1+800])
-
-idx2 = out.find("IssueClientCommandFromServer(")
+idx2 = out.find("<counterstrikesharp::IssueClientCommandFromServer(")
 print("=== IssueClientCommandFromServer ===")
-print(out[idx2:idx2+800])
+print(out[idx2:idx2+1200])
 '
 """
 stdin, stdout, stderr = ssh.exec_command(cmd)

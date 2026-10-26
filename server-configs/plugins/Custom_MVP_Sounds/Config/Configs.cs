@@ -1,0 +1,121 @@
+using System;
+using System.IO;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using Microsoft.Extensions.Localization;
+using System.Collections.Generic;
+
+namespace Custom_MVP_Sounds.Config
+{
+    public static class Configs
+    {
+        public static class Shared {
+            public static string? CookiesModule { get; set; }
+            public static IStringLocalizer? StringLocalizer { get; set; }
+        }
+        
+        private static readonly string ConfigDirectoryName = "config";
+        private static readonly string ConfigFileName = "config.json";
+        private static readonly string jsonFilePath = "MVP_Settings.json";
+        private static readonly string jsonFilePath2 = "MySql_Settings.json";
+        private static string? _jsonFilePath;
+        private static string? _jsonFilePath2;
+        private static string? _configFilePath;
+        private static ConfigData? _configData;
+
+        private static readonly JsonSerializerOptions SerializationOptions = new()
+        {
+            Converters =
+            {
+                new JsonStringEnumConverter()
+            },
+            WriteIndented = true,
+            AllowTrailingCommas = true,
+            ReadCommentHandling = JsonCommentHandling.Skip,
+        };
+
+        public static bool IsLoaded()
+        {
+            return _configData is not null;
+        }
+
+        public static ConfigData GetConfigData()
+        {
+            if (_configData is null)
+            {
+                throw new Exception("Config not yet loaded.");
+            }
+            
+            return _configData;
+        }
+
+        public static ConfigData Load(string modulePath)
+        {
+            var configFileDirectory = Path.Combine(modulePath, ConfigDirectoryName);
+            if(!Directory.Exists(configFileDirectory))
+            {
+                Directory.CreateDirectory(configFileDirectory);
+            }
+            _jsonFilePath = Path.Combine(configFileDirectory, jsonFilePath);
+            Helper.CreateDefaultWeaponsJson(_jsonFilePath);
+
+            _jsonFilePath2 = Path.Combine(configFileDirectory, jsonFilePath2);
+            Helper.CreateDefaultWeaponsJson2(_jsonFilePath2);
+
+            _configFilePath = Path.Combine(configFileDirectory, ConfigFileName);
+            if (File.Exists(_configFilePath))
+            {
+                _configData = JsonSerializer.Deserialize<ConfigData>(File.ReadAllText(_configFilePath), SerializationOptions);
+            }
+            else
+            {
+                _configData = new ConfigData();
+            }
+
+            if (_configData is null)
+            {
+                throw new Exception("Failed to load configs.");
+            }
+
+            SaveConfigData(_configData);
+            
+            return _configData;
+        }
+
+        private static void SaveConfigData(ConfigData configData)
+        {
+            if (_configFilePath is null)
+            {
+                throw new Exception("Config not yet loaded.");
+            }
+            string json = JsonSerializer.Serialize(configData, SerializationOptions);
+            File.WriteAllText(_configFilePath, json);
+        }
+
+        public class ConfigData
+        {
+            public bool MVP_UseMySql { get; set; }
+            public bool MVP_ForceDisableDefaultMVP_ToAll { get; set; }
+            public bool MVP_ChangeMVPMenuFromChatToCentre { get; set; }
+            public string MVP_InGameMenu { get; set; }
+            public Dictionary<string, string> MVP_DefaultMusicKitPerSteam { get; set; }
+            public string MVP_OnlyAllowTheseGroupsCanMVP { get; set; }
+            public string MVP_OnlyAllowTheseGroupsCanToggleOffMVP { get; set; }
+            public int MVP_AutoRemovePlayerCookieOlderThanXDays { get; set; }
+            public int MVP_AutoRemovePlayerMySqlOlderThanXDays { get; set; }
+            
+            public ConfigData()
+            {
+                MVP_UseMySql = false;
+                MVP_ForceDisableDefaultMVP_ToAll = false;
+                MVP_ChangeMVPMenuFromChatToCentre = true;
+                MVP_InGameMenu = "!mvp,!mvps,!anthem,!mvpsound";
+                MVP_DefaultMusicKitPerSteam = new Dictionary<string, string>();
+                MVP_OnlyAllowTheseGroupsCanMVP = "";
+                MVP_OnlyAllowTheseGroupsCanToggleOffMVP = "@css/root,@css/admin,@css/vip,#css/admin,#css/vip";
+                MVP_AutoRemovePlayerCookieOlderThanXDays = 7;
+                MVP_AutoRemovePlayerMySqlOlderThanXDays = 7;
+            }
+        }
+    }
+}

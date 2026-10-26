@@ -189,7 +189,7 @@ public class CustomMenuPlugin : BasePlugin, IPluginConfig<CustomMenuConfig>
         {
             if (!Utils.HasPermission(player, menuConfig.Permission, menuConfig.Team))
             {
-                player.PrintToChat(Instance.Config.Prefix + Instance.Localizer["NoPermission"]);
+                player.PrintToChat((Instance.Config.Prefix + " " + Instance.Localizer["NoPermission"]).ReplaceColorTags());
                 return;
             }
             OpenCustomMenu(player, menuKey, menuConfig);
@@ -256,19 +256,21 @@ public class CustomMenuPlugin : BasePlugin, IPluginConfig<CustomMenuConfig>
     {
         if (CommandCooldown(player, option))
         {
-            player.PrintToChat(Instance.Config.Prefix + Instance.Localizer["Cooldown"]);
+            player.PrintToChat((Instance.Config.Prefix + " " + Instance.Localizer["Cooldown"]).ReplaceColorTags());
             return;
         }
 
         if (option.Message)
         {
-            player.PrintToChat(Instance.Config.Prefix + Instance.Localizer["Selected", optionName]);
+            player.PrintToChat((Instance.Config.Prefix + " " + Instance.Localizer["Selected", optionName]).ReplaceColorTags());
         }
 
-        if (!string.IsNullOrEmpty(option.SoundEvent))
+        if (!string.IsNullOrEmpty(option.SoundEvent) && player.IsValid && !player.IsBot)
         {
-            var recipients = new RecipientFilter { player };
-            player.EmitSound(option.SoundEvent, recipients);
+            string snd = option.SoundEvent;
+            if (snd.EndsWith(".vsnd_c", StringComparison.OrdinalIgnoreCase))
+                snd = snd[..^2];
+            player.ExecuteClientCommand($"play {snd}");
         }
 
         // Check first if this triggers a sub-menu navigation

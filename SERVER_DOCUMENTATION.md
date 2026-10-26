@@ -323,13 +323,42 @@ Drag and drop any audio file onto `Convert_To_Clean_44k_MP3.bat`:
 
 | Symptom | Root Cause | Fix / Prevention |
 |---|---|---|
-| **Server hangs for 30s then crashes on preview/round end** | `ExecuteClientCommand("play ...")` was used on dedicated server; engine sound streamer deadlocks on headless audio device | Use `player.EmitSound(soundEvent, new RecipientFilter { player })`. Never execute `play` via engine console commands. |
-| **Server crashes instantly (`status 11/SEGV`) on sound** | `ExecuteClientCommandFromServer("play ...")` was used; dereferences null sound device pointer (`+0x88`) | Use native `EmitSound`. |
+| **Chat displays literal tags `gold}[MVP] {grey}| {white}...`** | `Helper.cs` / chat methods did not invoke `.ReplaceColorTags()`, or was missing `using CounterStrikeSharp.API.Core.Translations;` causing build to fail and revert. CS2 chat engine automatically strips the leading `{` from unparsed format strings, rendering `gold}`. | Add `using CounterStrikeSharp.API.Core.Translations;` to all translation/helper classes. Call `message = message.ReplaceColorTags();` and always prepend a leading space `" " + message` before passing to `player.PrintToChat()` so the CS2 client chat parser never drops color tag control bytes. |
+| **Server hangs for 30s or crashes with `Watchdog timeout / SIGSEGV` on preview or MVP round end** | `player.EmitSound` was called in `Custom_MVP_Sounds`. CounterStrikeSharp's signature for `CBaseEntity_EmitSoundFilter` in `gamedata.json` (`55 48 89 E5 53 48 89 FB...`) was broken by Valve CS2 update `2000935`, resolving to offset `0x30c4b0` in `libserver.so` (inside `std::string::resize`). Executing it jumped into glibc memory routines on arbitrary pointers, spinning in an infinite loop until the engine watchdog killed the server. | **Never use `player.EmitSound` while CSS gamedata signature is broken.** Use `player.ExecuteClientCommand($"play {soundPath}")` for human players (`!player.IsBot`). `ExecuteClientCommand` invokes `IVEngineServer2::ClientCommand(slot, ...)` via clean virtual table call `0x170`, sending a non-blocking network message to the client without executing any audio routines on the headless dedicated server. |
 | **`/mvp` menu blinks / pops in and out continuously** | CS2 Panorama HUD fades center HTML messages in ~200ms; menu was throttled or event-driven | Call `RenderMenu(player, state)` every tick in `OnTick()` while active and `!Globals.Show_Center`. |
 | **Song plays forever past round end** | Audio was not trimmed to round-end duration | Audio tracks must be trimmed to 10.0s with 1.0s fadeout using `export_clean_mp3.py`. |
 | **Resource compiler fails with "extraneous tokens"** | Syntax error in `soundevents_addon.vsndevts` KV3 format (missing braces or unquoted keys) | Use `wlz_mvp_studio.py` which formats KV3 soundevents blocks validly. |
 | **Players can't hear custom workshop anthem** | Workshop addon not mounted or item ID mismatch | Ensure `mm_extra_addons "3827657422"` is in `multiaddonmanager.cfg` and soundevent name matches `CustomMVP.{track_id}`. |
 | **Player weapon switch locked after choosing skin** | `AddEntityIOEvent("Kill")` left dangling handles in `CCSPlayer_WeaponServices.m_hMyWeapons` | Never call `Kill` on player weapon entities; use `AcceptInput("ChangeSubclass")` and dynamic attribute updates. |
+
+---
+
+### 9. Technical Post-Mortem: CounterStrikeSharp Audio & Chat Engine
+
+#### A. Broken `EmitSoundFilter` Signature (CS2 Update 2000935)
+When inspecting the runtime memory of `cs2` via `/proc/$PID/mem` on Linux:
+- CounterStrikeSharp scans `gamedata/gamedata.json` for `CBaseEntity_EmitSoundFilter`.
+- Due to compiler layout shifts in update `2000935`, the signature matches offset `0x30c4b0` in `libserver.so`, which is `_ZNSs6resizeEmc@@Base+0x34c640` (`std::string::resize`).
+- When `player.EmitSound(...)` was invoked, the server called `std::string::resize` with entity and recipient filter pointers, triggering an infinite tick loop. The engine watchdog thread subsequently halted execution after 30 seconds:
+  ```
+  WatchDog! Server took too long to process (probably infinite loop)
+  FATAL ERROR: Watchdog timeout exceeded, exiting
+  ```
+- **The Permanent Fix**: Use `player.ExecuteClientCommand($"play {soundPath}")` on human players (`!player.IsBot`). This calls `IVEngineServer2::ClientCommand(slot, "play ...")`, cleanly dispatching the command packet to the player client where the audio is rendered locally.
+
+#### B. CS2 Chat Color Tags Architecture
+CounterStrikeSharp relies on `CounterStrikeSharp.API.Core.Translations.StringExtensions.ReplaceColorTags(this string text)` to convert human-readable color markup into native Source 2 chat color bytes:
+- `{gold}` -> `0x10`
+- `{grey}` -> `0x08`
+- `{white}` / `{default}` -> `0x01`
+- `{green}` -> `0x04`
+- `{darkred}` -> `0x02`
+
+If un-parsed color strings are passed into `player.PrintToChat()`:
+- The CS2 client chat parser detects `{` as an unknown command escape and strips it.
+- The remaining text renders verbatim in chat as: `gold}[MVP] {grey}| {white}...`.
+- Furthermore, messages beginning with a color byte must always be preceded by a leading space (`player.PrintToChat(" " + message)`), otherwise the client engine drops the initial byte.
+
 
 
 

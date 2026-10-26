@@ -111,6 +111,14 @@ public class MVPSoundsGoldKingZ : BasePlugin
         Globals.Show_Center = false;
         Globals.Show_Center_Bottom = false;
 
+        foreach (var player in Helper.GetAllController())
+        {
+            if (player != null && player.IsValid && !player.IsBot && !player.IsHLTV)
+            {
+                player.ExecuteClientCommand("stopsound");
+            }
+        }
+
         return HookResult.Continue;
     }
 
@@ -478,24 +486,13 @@ public class MVPSoundsGoldKingZ : BasePlugin
         {
             if (player == null || !player.IsValid || player.IsBot) return;
 
-            var recipients = new RecipientFilter { player };
+            string soundToPlay = !string.IsNullOrEmpty(soundPath) ? soundPath : soundEvent;
+            if (string.IsNullOrEmpty(soundToPlay)) return;
 
-            // 1. Native Source 2 networked sound event emission (completely safe on headless dedicated server)
-            if (!string.IsNullOrEmpty(soundEvent))
-            {
-                player.EmitSound(soundEvent, recipients);
-                return;
-            }
+            if (soundToPlay.EndsWith(".vsnd_c", StringComparison.OrdinalIgnoreCase))
+                soundToPlay = soundToPlay[..^2];
 
-            // 2. Fallback to clean vsnd path if sound event name is somehow not found
-            if (!string.IsNullOrEmpty(soundPath))
-            {
-                string cleanSound = soundPath;
-                if (cleanSound.EndsWith(".vsnd_c", StringComparison.OrdinalIgnoreCase))
-                    cleanSound = cleanSound[..^2];
-
-                player.EmitSound(cleanSound, recipients);
-            }
+            player.ExecuteClientCommand($"play {soundToPlay}");
         }
         catch (Exception ex)
         {

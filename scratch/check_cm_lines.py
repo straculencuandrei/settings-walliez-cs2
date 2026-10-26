@@ -1,0 +1,14 @@
+import paramiko
+
+ssh = paramiko.SSHClient()
+ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+ssh.connect("81.181.113.120", port=22, username="root", password=")(e092e8EjTUiV")
+
+script = """
+sed -n '180,210p' /home/csgoserver/cs2-custommenu/CustomMenu.cs
+echo "--- 250-275 ---"
+sed -n '250,275p' /home/csgoserver/cs2-custommenu/CustomMenu.cs
+"""
+stdin, stdout, stderr = ssh.exec_command(script)
+print(stdout.read().decode('utf-8', errors='ignore'))
+ssh.close()
