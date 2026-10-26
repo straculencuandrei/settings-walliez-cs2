@@ -276,6 +276,26 @@ public class CustomMVPSounds : BasePlugin
         Globals.Show_Center = false;
         Globals.Show_Center_Bottom = false;
 
+        if (Configs.GetConfigData().MVP_ForceDisableDefaultMVP_ToAll)
+        {
+            var all = Helper.GetAllController();
+            all.ForEach(p =>
+            {
+                if (p != null && p.IsValid && !p.IsBot)
+                {
+                    try
+                    {
+                        p.MusicKitID = 0;
+                        if (p.InventoryServices != null)
+                        {
+                            p.InventoryServices.MusicID = 0;
+                        }
+                    }
+                    catch { }
+                }
+            });
+        }
+
         return HookResult.Continue;
     }
 
@@ -285,6 +305,20 @@ public class CustomMVPSounds : BasePlugin
         var player = @event.Userid;
 
         if (player == null || !player.IsValid || player.IsBot || player.IsHLTV) return HookResult.Continue;
+
+        if (Configs.GetConfigData().MVP_ForceDisableDefaultMVP_ToAll)
+        {
+            try
+            {
+                player.MusicKitID = 0;
+                if (player.InventoryServices != null)
+                {
+                    player.InventoryServices.MusicID = 0;
+                }
+            }
+            catch { }
+        }
+
         var playerid = player.SteamID;
         foreach (var kvp in Configs.GetConfigData().MVP_DefaultMusicKitPerSteam)
         {
@@ -773,20 +807,45 @@ public class CustomMVPSounds : BasePlugin
         if (Player == null || !Player.IsValid)return HookResult.Continue;
         var PlayerSteamID = Player.SteamID;
 
+        // Force disable Valve's default MVP sound for all players (we play custom ones)
+        @event.Musickitid = 0;
+        @event.Nomusic = 1;
+
+        if (Player != null && Player.IsValid)
+        {
+            try
+            {
+                Player.MusicKitID = 0;
+                if (Player.InventoryServices != null)
+                {
+                    Player.InventoryServices.MusicID = 0;
+                }
+            }
+            catch { }
+        }
+
         if(Configs.GetConfigData().MVP_ForceDisableDefaultMVP_ToAll)
-        {   var allplayerz = Helper.GetAllController();
+        {   
+            var allplayerz = Helper.GetAllController();
             allplayerz.ForEach(playerz =>
             {
                 if (playerz != null && playerz.IsValid && !playerz.IsBot)
                 {
-                    playerz.MVPs = 0;
+                    try
+                    {
+                        playerz.MusicKitID = 0;
+                        if (playerz.InventoryServices != null)
+                        {
+                            playerz.InventoryServices.MusicID = 0;
+                        }
+                    }
+                    catch { }
                 }
             });
         }
 
         if (Globals.Choosed_MVP.ContainsKey(PlayerSteamID))
         {
-            Player.MVPs = 0;
             string MVPKitChoosen = Globals.Choosed_MVP[PlayerSteamID];
 
             try

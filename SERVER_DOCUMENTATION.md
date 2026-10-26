@@ -328,7 +328,7 @@ Drag and drop any audio file onto `Convert_To_Clean_44k_MP3.bat`:
 | **`/mvp` menu blinks / pops in and out continuously** | CS2 Panorama HUD fades center HTML messages in ~200ms; menu was throttled with excessive delay or event-only updates without refresh. | Throttle `RenderMenu` to an optimal 180ms cadence in `OnTick()`, keeping Panorama stably illuminated without flooding net packets. |
 | **Song plays forever past round end** | Audio was not trimmed to round-end duration | Audio tracks must be trimmed to 10.0s with 1.0s fadeout using `export_clean_mp3.py`. |
 | **Resource compiler fails with "extraneous tokens"** | Syntax error in `soundevents_addon.vsndevts` KV3 format (missing braces or unquoted keys) | Use `wlz_mvp_studio.py` which formats KV3 soundevents blocks validly. |
-| **Players can't hear custom workshop anthem** | Workshop addon not mounted or item ID mismatch | Ensure `mm_extra_addons "3827657422"` is in `multiaddonmanager.cfg` and soundevent name matches `CustomMVP.{track_id}`. |
+| **Players can't hear custom workshop anthem / client crashes on preview** | Invoking `player.EmitSound("CustomMVP...")` triggers Source 2 `CSosOperatorConvar` query on deprecated CS:GO convars (`snd_musicvolume_armsrace`, etc.), crashing `cs2.exe`. | In `Custom_MVP_Sounds.cs`, execute direct compiled audio playback via `player.ExecuteClientCommand($"play {soundPath}")` with `sounds/mvp/{track}.vsnd_c`. This plays the compiled audio directly from the mounted MultiAddonManager workshop VPK, completely bypassing the Source 2 sound operator system and eliminating convar errors. |
 | **Player weapon switch locked after choosing skin** | `AddEntityIOEvent("Kill")` left dangling handles in `CCSPlayer_WeaponServices.m_hMyWeapons` | Never call `Kill` on player weapon entities; use `AcceptInput("ChangeSubclass")` and dynamic attribute updates. |
 
 ---
@@ -370,6 +370,77 @@ Drag and drop any audio file onto `Convert_To_Clean_44k_MP3.bat`:
    - Python monitor: `/home/csgoserver/cs2_crash_monitor.py`.
    - Monitored journalctl unit: `cs2.service`.
    - On crash or segfault detection, it automatically extracts journalctl lines, CounterStrikeSharp logs, and writes reports to `/home/csgoserver/cs2_crash_reports/crash_YYYY-MM-DD_HH-MM-SS.log` and maintains `/home/csgoserver/LAST_CRASH.txt` for immediate incident inspection.
+
+#### D. Source 2 Sound Operator Crash: `mixgroup = "Music"` Convar Incompatibility
+- **Symptoms**:
+  - Playing or previewing a custom MVP track triggered red console spam on the client:
+    ```text
+    [SndOperators] Operator Error: Event CustomMVP.stiufeatwalli3zmastered: CSosOperatorConvar
+    [SndOperators] Warning: Unable to acquire convar value: snd_musicvolume_casual
+    [SndOperators] Warning: Unable to acquire convar value: snd_musicvolume_armsrace
+    [SndOperators] Warning: Unable to acquire convar value: snd_musicvolume_deathmatch
+    [SndOperators] Warning: Unable to acquire convar value: snd_musicvolume_rush
+    ```
+- **Root Cause**:
+  - Setting `mixgroup = "Music"` (or `type = "csgo_music"`) causes the Source 2 audio graph operator `CSosOperatorConvar` to poll non-existent CS:GO mode music convars.
+- **Fix**:
+  - In `soundevents_addon.vsndevts`, declare custom sound events as clean `type = "csgo_mega"` with `volume = 1.0` and `vsnd_files_track_01`, completely omitting `mixgroup = "Music"`.
+  - Recompiled via `resourcecompiler.exe` and deployed to workshop VPK `3827657422`.
+
+#### E. Client Prediction Freeze & Timeout: `play` vs `player.EmitSound`
+- **Symptoms**:
+  - Previewing an anthem caused the client to freeze for ~4.3 to 8.0 seconds:
+    ```text
+    [Prediction] Prediction time (476.104126) is less than sim time (480.478363)?  Clamping offset
+    [Prediction] CPrediction::PerformPrediction executed too many commands
+    [Networking] server @ 81.181.113.120:27015: timing out, last received 1338.342362 [8.00 seconds ago]
+    [Client] CL: WARNING: Connection Problem, requesting uncompressed update
+    ```
+- **Root Cause**:
+  - Injecting `player.ExecuteClientCommand("play sounds/mvp/...vsnd")` forced the client engine to synchronously search disk searchpaths for an uncompiled file outside the soundevent system, locking the client main thread for 8.00s.
+  - When the client unfroze, prediction commands overflowed the server socket buffer (`recv queue overflow 100 messages already queued`), triggering server watchdog aborts.
+- **Fix**:
+  - In [Custom_MVP_Sounds.cs](file:///c:/Users/buzunar/Documents/cs2server/server-configs/plugins/Custom_MVP_Sounds/Custom_MVP_Sounds.cs#L487-L508), `PlaySoundToPlayer` now exclusively calls native `player.EmitSound(soundEvent)`.
+  - Native `EmitSound` streams the compiled `.vsnd_c` asset through the mounted MultiAddonManager workshop VPK instantaneously with zero frame hitching, zero command desync, and zero network timeouts.
+
+#### F. Valve Default MVP Suppression
+- **Objective**: Silence official Valve music kit anthems for all players so only custom server anthems play when someone gets MVP.
+- **Root Cause of Default Music Playing**:
+  - Valve CS2 fires `round_mvp` event containing `musickitid` and `nomusic` byte flags. If unhandled or if `nomusic == 0`, client audio engine plays the player's equipped Valve music kit.
+  - Prior implementation attempted to wipe `player.MVPs = 0`, which only reset scoreboard stars and did not suppress audio.
+  - Additionally, `WeaponPaints` had `"MusicEnabled": true`, which re-fired `round_mvp` with equipped Valve music kits.
+- **Fix Applied**:
+  1. In [Custom_MVP_Sounds.cs](file:///c:/Users/buzunar/Documents/cs2server/Custom_MVP_Sounds.cs#L803-L835) `OnEventRoundMvp`:
+     - Set `@event.Musickitid = 0;` and `@event.Nomusic = 1;`.
+     - Cleared `Player.MusicKitID = 0;` and `Player.InventoryServices.MusicID = 0;`.
+     - Removed `Player.MVPs = 0;` so players retain their legitimate scoreboard stars.
+  2. In `Custom_MVP_Sounds/config/config.json`:
+     - Enabled `"MVP_ForceDisableDefaultMVP_ToAll": true`.
+  3. In `WeaponPaints/WeaponPaints.json`:
+     - Set `"MusicEnabled": false` to prevent WeaponPaints from assigning Valve music kits or re-firing `round_mvp`.
+
+#### G. Core Game End-of-Match Map Voting
+- **Objective**: Display the native CS2 Panorama map voting screen at match end so players can vote for the next map.
+- **Root Cause of Empty Vote Screen ("No maps showing")**:
+  - The native CS2 map vote system does not use flat text files alone; it queries the active **map group** (`mapgroup`).
+  - The server startup line in `cs2.service` did not specify a `+mapgroup`, causing CS2 engine to report `CommandMapGroup: No mapgroup specified` and leaving the voting pool empty.
+  - Convar `mp_match_end_changelevel` was `false` (0), which blocked CS2 from initiating the changelevel workflow.
+- **Fix Applied**:
+  1. **Map Group Definition**: Created `/home/csgoserver/server-cs2/game/csgo/gamemodes_server.txt` declaring mapgroup `mg_active` for both `competitive` and `casual` game modes with all active maps (`de_mirage`, `de_dust2`, `de_inferno`, `de_nuke`, `de_ancient`, `de_anubis`, `de_train`, `de_vertigo`, `de_overpass`, `cs_office`).
+  2. **Map List Files**: Created `mapcycle.txt` and `maplist.txt` in `/home/csgoserver/server-cs2/game/csgo/`.
+  3. **Startup Parameter**: Updated `/etc/systemd/system/cs2.service` to launch with `+mapgroup mg_active +map de_mirage`.
+  4. **Voting Convars**: Added to `gamemode_competitive_server.cfg` and `server.cfg`:
+     ```cfg
+     mapgroup mg_active
+     mp_match_end_changelevel 1
+     mp_match_end_restart 0
+     mp_endmatch_votenextmap 1
+     mp_endmatch_votenextmap_keepcurrent 1
+     mp_endmatch_votenextleveltime 20
+     ```
+
+
+
 
 
 
