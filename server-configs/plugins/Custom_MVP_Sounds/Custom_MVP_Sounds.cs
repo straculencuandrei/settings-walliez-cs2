@@ -115,7 +115,11 @@ public class MVPSoundsGoldKingZ : BasePlugin
         {
             if (player != null && player.IsValid && !player.IsBot && !player.IsHLTV)
             {
-                player.ExecuteClientCommand("stopsound");
+                try
+                {
+                    player.ExecuteClientCommand("stopsound");
+                }
+                catch { }
             }
         }
 
@@ -484,13 +488,16 @@ public class MVPSoundsGoldKingZ : BasePlugin
     {
         try
         {
-            if (player == null || !player.IsValid || player.IsBot) return;
+            if (player == null || !player.IsValid || player.IsBot || player.IsHLTV)
+                return;
 
             string soundToPlay = !string.IsNullOrEmpty(soundPath) ? soundPath : soundEvent;
             if (string.IsNullOrEmpty(soundToPlay)) return;
 
             if (soundToPlay.EndsWith(".vsnd_c", StringComparison.OrdinalIgnoreCase))
                 soundToPlay = soundToPlay[..^2];
+
+            soundToPlay = soundToPlay.Trim().Replace("\"", "").Replace(";", "");
 
             player.ExecuteClientCommand($"play {soundToPlay}");
         }
@@ -688,12 +695,16 @@ public class MVPSoundsGoldKingZ : BasePlugin
 
             state.PreviousButtons = buttons;
 
-            // Render WASD menu every tick while active (CS2 center HTML HUD message fades in ~200ms)
+            // Throttle rendering to only when state is dirty OR every 180ms to refresh the display,
+            // preventing network send queue starvation / buffer overflow (64Hz unthrottled flooding).
             if (!Globals.Show_Center)
             {
-                RenderMenu(player, state);
-                state.IsDirty = false;
-                state.LastRenderTimeUtc = now;
+                if (state.IsDirty || (now - state.LastRenderTimeUtc).TotalMilliseconds >= 180)
+                {
+                    RenderMenu(player, state);
+                    state.IsDirty = false;
+                    state.LastRenderTimeUtc = now;
+                }
             }
         }
 

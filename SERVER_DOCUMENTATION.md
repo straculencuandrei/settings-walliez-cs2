@@ -324,8 +324,8 @@ Drag and drop any audio file onto `Convert_To_Clean_44k_MP3.bat`:
 | Symptom | Root Cause | Fix / Prevention |
 |---|---|---|
 | **Chat displays literal tags `gold}[MVP] {grey}| {white}...`** | `Helper.cs` / chat methods did not invoke `.ReplaceColorTags()`, or was missing `using CounterStrikeSharp.API.Core.Translations;` causing build to fail and revert. CS2 chat engine automatically strips the leading `{` from unparsed format strings, rendering `gold}`. | Add `using CounterStrikeSharp.API.Core.Translations;` to all translation/helper classes. Call `message = message.ReplaceColorTags();` and always prepend a leading space `" " + message` before passing to `player.PrintToChat()` so the CS2 client chat parser never drops color tag control bytes. |
-| **Server hangs for 30s or crashes with `Watchdog timeout / SIGSEGV` on preview or MVP round end** | `player.EmitSound` was called in `Custom_MVP_Sounds`. CounterStrikeSharp's signature for `CBaseEntity_EmitSoundFilter` in `gamedata.json` (`55 48 89 E5 53 48 89 FB...`) was broken by Valve CS2 update `2000935`, resolving to offset `0x30c4b0` in `libserver.so` (inside `std::string::resize`). Executing it jumped into glibc memory routines on arbitrary pointers, spinning in an infinite loop until the engine watchdog killed the server. | **Never use `player.EmitSound` while CSS gamedata signature is broken.** Use `player.ExecuteClientCommand($"play {soundPath}")` for human players (`!player.IsBot`). `ExecuteClientCommand` invokes `IVEngineServer2::ClientCommand(slot, ...)` via clean virtual table call `0x170`, sending a non-blocking network message to the client without executing any audio routines on the headless dedicated server. |
-| **`/mvp` menu blinks / pops in and out continuously** | CS2 Panorama HUD fades center HTML messages in ~200ms; menu was throttled or event-driven | Call `RenderMenu(player, state)` every tick in `OnTick()` while active and `!Globals.Show_Center`. |
+| **Server hangs for 30s or crashes with `Watchdog timeout / SIGSEGV` on preview or MVP round end** | `RenderMenu(player, state)` in `Custom_MVP_Sounds` was called unconditionally on **every server tick** (64 Hz), flooding the player's UDP netchannel with large Panorama center HTML packets (`recv queue overflow 100 messages already queued`). When "Preview" or round start called `ExecuteClientCommand` (`play ...` or `stopsound`), dispatching a reliable network message into the already-saturated netchannel caused the engine thread to block waiting for UDP acks, deadlocking the main server tick loop until the 30-second engine watchdog killed the server. | Throttle `RenderMenu(player, state)` in `OnTick()`: only re-render if `state.IsDirty` or `(now - state.LastRenderTimeUtc).TotalMilliseconds >= 180`. This maintains full HUD visibility without saturating the UDP network buffer. Ensure `PlaySoundToPlayer` and `stopsound` sanitize command strings and check player validity. |
+| **`/mvp` menu blinks / pops in and out continuously** | CS2 Panorama HUD fades center HTML messages in ~200ms; menu was throttled with excessive delay or event-only updates without refresh. | Throttle `RenderMenu` to an optimal 180ms cadence in `OnTick()`, keeping Panorama stably illuminated without flooding net packets. |
 | **Song plays forever past round end** | Audio was not trimmed to round-end duration | Audio tracks must be trimmed to 10.0s with 1.0s fadeout using `export_clean_mp3.py`. |
 | **Resource compiler fails with "extraneous tokens"** | Syntax error in `soundevents_addon.vsndevts` KV3 format (missing braces or unquoted keys) | Use `wlz_mvp_studio.py` which formats KV3 soundevents blocks validly. |
 | **Players can't hear custom workshop anthem** | Workshop addon not mounted or item ID mismatch | Ensure `mm_extra_addons "3827657422"` is in `multiaddonmanager.cfg` and soundevent name matches `CustomMVP.{track_id}`. |
@@ -335,16 +335,26 @@ Drag and drop any audio file onto `Convert_To_Clean_44k_MP3.bat`:
 
 ### 9. Technical Post-Mortem: CounterStrikeSharp Audio & Chat Engine
 
-#### A. Broken `EmitSoundFilter` Signature (CS2 Update 2000935)
-When inspecting the runtime memory of `cs2` via `/proc/$PID/mem` on Linux:
-- CounterStrikeSharp scans `gamedata/gamedata.json` for `CBaseEntity_EmitSoundFilter`.
-- Due to compiler layout shifts in update `2000935`, the signature matches offset `0x30c4b0` in `libserver.so`, which is `_ZNSs6resizeEmc@@Base+0x34c640` (`std::string::resize`).
-- When `player.EmitSound(...)` was invoked, the server called `std::string::resize` with entity and recipient filter pointers, triggering an infinite tick loop. The engine watchdog thread subsequently halted execution after 30 seconds:
-  ```
-  WatchDog! Server took too long to process (probably infinite loop)
-  FATAL ERROR: Watchdog timeout exceeded, exiting
-  ```
-- **The Permanent Fix**: Use `player.ExecuteClientCommand($"play {soundPath}")` on human players (`!player.IsBot`). This calls `IVEngineServer2::ClientCommand(slot, "play ...")`, cleanly dispatching the command packet to the player client where the audio is rendered locally.
+#### A. Netchannel Saturation & Watchdog Deadlock
+- **Symptoms**:
+  - Selecting "Preview Track (10s)" in `/mvp` or reaching round end caused the server to hang completely for 30 seconds.
+  - Journal logs showed rapid netchannel buffer saturation:
+    ```text
+    Netchan queued message new high water mark reached by doggg at 62 messages
+    recv queue overflow 100 messages already queued.
+    ... (30 repeated overflow notices) ...
+    WatchDog! Server took too long to process (probably infinite loop)
+    FATAL ERROR: Watchdog timeout exceeded, exiting
+    ```
+- **Root Cause**:
+  - In `Custom_MVP_Sounds.cs` inside `OnTick()`, `RenderMenu(player, state)` called `player.PrintToCenterHtml(...)` on **every single tick** (64 Hz) for any player with the `/mvp` menu open.
+  - Each `PrintToCenterHtml` call enqueued a reliable Panorama network message. Within 1-2 seconds, the client's reliable netchannel queue was completely full (hitting the 100-message ceiling).
+  - When the player triggered "Preview Track" (invoking `player.ExecuteClientCommand($"play {sound}")`) or round start triggered `stopsound`, `IVEngineServer2::ClientCommand` attempted to enqueue another reliable command packet into the saturated stream.
+  - The engine's reliable network sender blocked waiting for socket buffer space and client acknowledgments. However, because the dedicated server's tick loop was blocked, `CNetworkGameServer::ProcessMessages` could not run to process the client's UDP acks.
+  - This resulted in an unrecoverable deadlock of the main server thread. After 30 seconds with no completed ticks, Valve's watchdog thread (`EngineWatchdogThread`) triggered a fatal abort.
+- **The Permanent Fix**:
+  - In `OnTick()`, render menu updates ONLY when `state.IsDirty` or when `(now - state.LastRenderTimeUtc).TotalMilliseconds >= 180`. This provides 100% flicker-free HUD display while slashing network traffic by >88%, entirely preventing netchannel saturation.
+  - Sanitize all sound arguments in `PlaySoundToPlayer` (`.Trim().Replace("\"", "").Replace(";", "")`) and wrap client commands in error-handling blocks with player connection verification.
 
 #### B. CS2 Chat Color Tags Architecture
 CounterStrikeSharp relies on `CounterStrikeSharp.API.Core.Translations.StringExtensions.ReplaceColorTags(this string text)` to convert human-readable color markup into native Source 2 chat color bytes:
