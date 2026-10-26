@@ -1,81 +1,113 @@
-#nullable enable
-using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
 using System.Text;
-using System.Threading.Tasks;
-using CounterStrikeSharp.API;
-using CounterStrikeSharp.API.Core;
-using CounterStrikeSharp.API.Core.Attributes.Registration;
-using CounterStrikeSharp.API.Modules.Admin;
-using CounterStrikeSharp.API.Modules.Commands;
-using CounterStrikeSharp.API.Modules.Timers;
-using CounterStrikeSharp.API.Modules.Utils;
-using Microsoft.Extensions.Localization;
 using MySqlConnector;
 using Newtonsoft.Json;
-using Custom_MVP_Sounds.Config;
+using CounterStrikeSharp.API;
+using CounterStrikeSharp.API.Core;
+using Microsoft.Extensions.Localization;
+using CounterStrikeSharp.API.Modules.Menu;
+using CounterStrikeSharp.API.Modules.Timers;
 
 namespace Custom_MVP_Sounds;
+using Custom_MVP_Sounds.Config;
+using CounterStrikeSharp.API.Core.Attributes.Registration;
+using CounterStrikeSharp.API.Modules.Commands;
 
-internal sealed class CMenuOption
+public class CustomMVPSounds : BasePlugin
 {
-    public string Text { get; set; } = string.Empty;
-    public bool Disabled { get; set; }
-    public Action<CCSPlayerController> Callback { get; set; } = _ => { };
-}
-
-internal sealed class CMenu
-{
-    public string Id { get; set; } = string.Empty;
-    public string Title { get; set; } = string.Empty;
-    public Action<CCSPlayerController>? CustomBackAction { get; set; }
-    public List<CMenuOption> Options { get; } = new();
-
-    public CMenu(string id, string title)
+    private string GetMvpSettingsPath()
     {
-        Id = id;
-        Title = title;
+        string p1 = Path.Combine(ModuleDirectory, "config/MVP_Settings.json");
+        if (File.Exists(p1)) return p1;
+        string p2 = Path.Combine(ModuleDirectory, "../../plugins/Custom_MVP_Sounds/config/MVP_Settings.json");
+        if (File.Exists(p2)) return p2;
+        string p3 = Path.Combine(ModuleDirectory, "../../plugins/MVP-Sounds-GoldKingZ/config/MVP_Settings.json");
+        if (File.Exists(p3)) return p3;
+        return p1;
     }
 
-    public void AddOption(string text, Action<CCSPlayerController> callback, bool disabled = false)
+    public void OpenMvpMenu(CCSPlayerController Player)
     {
-        Options.Add(new CMenuOption
+        if (Player == null || !Player.IsValid || Player.IsBot || Player.IsHLTV) return;
+        var PlayerSteamID = Player.SteamID;
+        Helper.PersonData personData = Helper.RetrievePersonDataById(PlayerSteamID);
+
+        if (!string.IsNullOrEmpty(Configs.GetConfigData().MVP_OnlyAllowTheseGroupsCanMVP) && !Globals.allow_groups.ContainsKey(PlayerSteamID))
         {
-            Text = text,
-            Callback = callback,
-            Disabled = disabled
-        });
+            if (!string.IsNullOrEmpty(Localizer["player.not.allowed"]))
+            {
+                Helper.AdvancedPrintToChat(Player, Localizer["player.not.allowed"]);
+            }
+            return;
+        }
+
+        try
+        {
+            string jsonFilePath = GetMvpSettingsPath();
+            string jsonData = File.ReadAllText(jsonFilePath);
+            var data = JsonConvert.DeserializeObject<Dictionary<string, Dictionary<string, string>>>(jsonData);
+            if (data == null) return;
+
+            IMenu VoteGameModeMenu;
+            if (Configs.GetConfigData().MVP_ChangeMVPMenuFromChatToCentre)
+            {
+                VoteGameModeMenu = new CenterHtmlMenu(Localizer["menu.music"], this);
+            }
+            else
+            {
+                VoteGameModeMenu = new ChatMenu(Localizer["menu.music"]);
+            }
+
+            if (personData.Client_Mute_MVP)
+            {
+                VoteGameModeMenu.AddMenuOption(Localizer["menu.enabled"], (p, option) => HandleMenu(p, option, string.Empty, null!, false));
+            }
+            else
+            {
+                VoteGameModeMenu.AddMenuOption(Localizer["menu.disabled"], (p, option) => HandleMenu(p, option, string.Empty, null!, false));
+            }
+
+            VoteGameModeMenu.AddMenuOption(Localizer["menu.remove"], (p, option) => HandleMenu(p, option, string.Empty, null!, false));
+
+            foreach (var key in data.Keys)
+            {
+                string ChoosenKitKey = data[key]["MVP_Kit_Name"];
+                bool isPreviewAble = data[key].ContainsKey("CanBePreview") && bool.TryParse(data[key]["CanBePreview"].ToString(), out bool PreviewValue) ? PreviewValue : false;
+                bool isHiddenItem = data[key].ContainsKey("HIDDEN") && bool.TryParse(data[key]["HIDDEN"].ToString(), out bool isHiddenItemValue) ? isHiddenItemValue : false;
+                string HasFlag = data[key].ContainsKey("FLAGS") ? data[key]["FLAGS"] : null!;
+
+                if (isHiddenItem && !string.IsNullOrEmpty(HasFlag) && !Helper.IsPlayerInGroupPermission(Player, HasFlag)) continue;
+                VoteGameModeMenu.AddMenuOption(ChoosenKitKey, (p, option) => HandleMenu(p, option, key, HasFlag, isPreviewAble));
+            }
+
+            if (Configs.GetConfigData().MVP_ChangeMVPMenuFromChatToCentre)
+            {
+                if (VoteGameModeMenu is CenterHtmlMenu centerHtmlMenu)
+                {
+                    MenuManager.OpenCenterHtmlMenu(this, Player, centerHtmlMenu);
+                }
+            }
+            else
+            {
+                if (VoteGameModeMenu is ChatMenu chatMenu)
+                {
+                    MenuManager.OpenChatMenu(Player, chatMenu);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Custom_MVP_Sounds] Error opening menu: {ex.Message}");
+        }
     }
-}
 
-internal sealed class CMenuState
-{
-    public CMenu? ActiveMenu { get; set; }
-    public Stack<CMenu> History { get; } = new();
-    public int SelectedIndex { get; set; }
-    public int ScrollOffset { get; set; }
-    public PlayerButtons PreviousButtons { get; set; }
-    public DateTime OpenedAtUtc { get; set; } = DateTime.MinValue;
-    public DateTime NextScrollRepeatUtc { get; set; } = DateTime.MinValue;
-    public bool IsDirty { get; set; } = true;
-    public DateTime LastRenderTimeUtc { get; set; } = DateTime.MinValue;
-}
-
-public class MVPSoundsGoldKingZ : BasePlugin
-{
     public override string ModuleName => "Custom MVP Sounds";
-    public override string ModuleVersion => "2.0.0";
-    public override string ModuleAuthor => "Walliez / modernized by Antigravity";
-    public override string ModuleDescription => "Custom Server MVP Music Pack with WASD Menu";
-
+    public override string ModuleVersion => "1.0.5";
+    public override string ModuleAuthor => "Walliez";
+    public override string ModuleDescription => "Custom Server MVP Music Pack";
     internal static IStringLocalizer? Stringlocalizer;
     private CounterStrikeSharp.API.Modules.Timers.Timer? HUDTimer_Center;
     private CounterStrikeSharp.API.Modules.Timers.Timer? HUDTimer_Center_Bottom;
-
-    private readonly Dictionary<int, CMenuState> _playerMenuStates = new();
-    private readonly Dictionary<int, DateTime> _previewCooldowns = new();
+	
 
     public override void Load(bool hotReload)
     {
@@ -83,846 +115,757 @@ public class MVPSoundsGoldKingZ : BasePlugin
         Stringlocalizer = Localizer;
         Configs.Shared.CookiesModule = ModuleDirectory;
         Configs.Shared.StringLocalizer = Localizer;
-
-        RegisterEventHandler<EventRoundMvp>(OnEventRoundMvp, HookMode.Pre);
+        RegisterEventHandler<EventRoundMvp>(OnEventRoundMvp,HookMode.Pre);
         RegisterEventHandler<EventPlayerConnectFull>(OnEventPlayerConnectFull);
-        RegisterEventHandler<EventPlayerDisconnect>(OnPlayerDisconnect);
-        RegisterEventHandler<EventRoundStart>(OnRoundStart);
         RegisterListener<Listeners.OnTick>(OnTick);
+        RegisterEventHandler<EventPlayerDisconnect>(OnPlayerDisconnect);
         RegisterListener<Listeners.OnMapEnd>(OnMapEnd);
-
+        RegisterEventHandler<EventRoundStart>(OnRoundStart);
         AddCommandListener("say", OnCommandSay);
         AddCommandListener("say_team", OnCommandSay);
-        AddCommand("css_mvp", "Open MVP Menu", OnCommandMvp);
-        AddCommand("mvp", "Open MVP Menu", OnCommandMvp);
-        AddCommand("mvpsound", "Open MVP Menu", OnCommandMvp);
-        AddCommand("anthem", "Open MVP Menu", OnCommandMvp);
-    }
+        AddCommand("css_mvp", "Open MVP Menu", (p, info) => { if (p != null && p.IsValid) OpenMvpMenu(p); });
+        AddCommand("mvp", "Open MVP Menu", (p, info) => { if (p != null && p.IsValid) OpenMvpMenu(p); });
+        AddCommand("anthem", "Open MVP Menu", (p, info) => { if (p != null && p.IsValid) OpenMvpMenu(p); });
 
+    }
     private HookResult OnRoundStart(EventRoundStart @event, GameEventInfo info)
     {
-        if (@event == null) return HookResult.Continue;
+        if(@event == null)return HookResult.Continue;
 
         HUDTimer_Center?.Kill();
         HUDTimer_Center = null;
         HUDTimer_Center_Bottom?.Kill();
         HUDTimer_Center_Bottom = null;
-
+        
         Globals.Show_Center = false;
         Globals.Show_Center_Bottom = false;
-
-        foreach (var player in Helper.GetAllController())
-        {
-            if (player != null && player.IsValid && !player.IsBot && !player.IsHLTV)
-            {
-                try
-                {
-                    player.ExecuteClientCommand("stopsound");
-                }
-                catch { }
-            }
-        }
 
         return HookResult.Continue;
     }
 
     public HookResult OnEventPlayerConnectFull(EventPlayerConnectFull @event, GameEventInfo info)
     {
-        if (@event == null) return HookResult.Continue;
+        if (@event == null)return HookResult.Continue;
         var player = @event.Userid;
-        if (player == null || !player.IsValid || player.IsBot || player.IsHLTV) return HookResult.Continue;
 
+        if (player == null || !player.IsValid || player.IsBot || player.IsHLTV) return HookResult.Continue;
         var playerid = player.SteamID;
         foreach (var kvp in Configs.GetConfigData().MVP_DefaultMusicKitPerSteam)
         {
             if (kvp.Key.ToString() == playerid.ToString())
             {
-                Globals.Choosed_MVP[player.SteamID] = kvp.Value;
+                string defaultmusickit = kvp.Value;
+                if (!Globals.Choosed_MVP.ContainsKey(player.SteamID))
+                {
+                    Globals.Choosed_MVP.Add(player.SteamID, defaultmusickit);
+                }
+                if (Globals.Choosed_MVP.ContainsKey(player.SteamID))
+                {
+                    Globals.Choosed_MVP[player.SteamID] = defaultmusickit;
+                }
                 break;
             }
         }
-
-        if (!string.IsNullOrEmpty(Configs.GetConfigData().MVP_OnlyAllowTheseGroupsCanMVP) &&
-            Helper.IsPlayerInGroupPermission(player, Configs.GetConfigData().MVP_OnlyAllowTheseGroupsCanMVP))
+        
+        if (!string.IsNullOrEmpty(Configs.GetConfigData().MVP_OnlyAllowTheseGroupsCanMVP) && Helper.IsPlayerInGroupPermission(player, Configs.GetConfigData().MVP_OnlyAllowTheseGroupsCanMVP))
         {
-            Globals.allow_groups[playerid] = true;
+            if (!Globals.allow_groups.ContainsKey(playerid))
+            {
+                Globals.allow_groups.Add(playerid, true);
+            }
         }
 
-        if (!string.IsNullOrEmpty(Configs.GetConfigData().MVP_OnlyAllowTheseGroupsCanToggleOffMVP) &&
-            Helper.IsPlayerInGroupPermission(player, Configs.GetConfigData().MVP_OnlyAllowTheseGroupsCanToggleOffMVP))
+        if(!string.IsNullOrEmpty(Configs.GetConfigData().MVP_OnlyAllowTheseGroupsCanToggleOffMVP) && Helper.IsPlayerInGroupPermission(player, Configs.GetConfigData().MVP_OnlyAllowTheseGroupsCanToggleOffMVP))
         {
-            Globals.client_cantoggle[playerid] = true;
+            if (!Globals.client_cantoggle.ContainsKey(playerid))
+            {
+                Globals.client_cantoggle.Add(playerid, true);
+            }
         }
+
 
         Helper.PersonData personData = Helper.RetrievePersonDataById(playerid);
-        if (!string.IsNullOrEmpty(personData.MusicKit))
+
+        if(!string.IsNullOrEmpty(personData.MusicKit))
         {
-            Globals.Choosed_MVP[player.SteamID] = personData.MusicKit;
+            if (!Globals.Choosed_MVP.ContainsKey(player.SteamID))
+            {
+                Globals.Choosed_MVP.Add(player.SteamID, personData.MusicKit);
+            }
+            if (Globals.Choosed_MVP.ContainsKey(player.SteamID))
+            {
+                Globals.Choosed_MVP[player.SteamID] = personData.MusicKit;
+            }
         }
 
-        if (personData.Client_Mute_MVP)
+        if(personData.Client_Mute_MVP)
         {
-            Globals.client_mute[player.SteamID] = true;
+            if (!Globals.client_mute.ContainsKey(player.SteamID))
+            {
+                Globals.client_mute.Add(player.SteamID, true);
+            }
+            if (Globals.client_mute.ContainsKey(player.SteamID))
+            {
+                Globals.client_mute[player.SteamID] = true;
+            }
         }
 
-        if (Configs.GetConfigData().MVP_UseMySql)
+
+        if(Configs.GetConfigData().MVP_UseMySql)
         {
-            Task.Run(async () =>
+            async Task PerformDatabaseOperationAsync()
             {
                 try
                 {
-                    string mysqlPath = Path.Combine(ModuleDirectory, "config/MySql_Settings.json");
-                    if (!File.Exists(mysqlPath)) return;
-                    var connectionSettings = JsonConvert.DeserializeObject<MySqlDataManager.MySqlConnectionSettings>(await File.ReadAllTextAsync(mysqlPath));
-                    if (connectionSettings == null) return;
-
+                    var connectionSettings = JsonConvert.DeserializeObject<MySqlDataManager.MySqlConnectionSettings>(await File.ReadAllTextAsync(Path.Combine(Path.Combine(ModuleDirectory, "config"), "MySql_Settings.json")));
                     var connectionString = new MySqlConnectionStringBuilder
                     {
-                        Server = connectionSettings.MySqlHost,
+                        Server = connectionSettings!.MySqlHost,
                         Port = (uint)connectionSettings.MySqlPort,
                         Database = connectionSettings.MySqlDatabase,
                         UserID = connectionSettings.MySqlUsername,
                         Password = connectionSettings.MySqlPassword
                     }.ConnectionString;
 
-                    using var connection = new MySqlConnection(connectionString);
-                    await connection.OpenAsync();
-                    await MySqlDataManager.CreatePersonDataTableIfNotExistsAsync(connection);
-
-                    var result = await MySqlDataManager.RetrievePersonDataByIdAsync(playerid, connection);
-                    if (result != null)
+                    using (var connection = new MySqlConnection(connectionString))
                     {
-                        if (!string.IsNullOrEmpty(result.MusicKit))
+                        await connection.OpenAsync();
+                        var personDataz = await MySqlDataManager.RetrievePersonDataByIdAsync(playerid, connection);
+                        if (personDataz.PlayerSteamID != 0)
                         {
-                            Globals.Choosed_MVP[player.SteamID] = result.MusicKit;
+                            DateTime personDate = DateTime.Now;
+                            if(!string.IsNullOrEmpty(personDataz.MusicKit))
+                            {
+                                if (!Globals.Choosed_MVP.ContainsKey(player.SteamID))
+                                {
+                                    Globals.Choosed_MVP.Add(player.SteamID, personDataz.MusicKit);
+                                }
+                                if (Globals.Choosed_MVP.ContainsKey(player.SteamID))
+                                {
+                                    Globals.Choosed_MVP[player.SteamID] = personDataz.MusicKit;
+                                }
+                            }
+                            if(personDataz.Client_Mute_MVP)
+                            {
+                                if (!Globals.client_mute.ContainsKey(player.SteamID))
+                                {
+                                    Globals.client_mute.Add(player.SteamID, true);
+                                }
+                                if (Globals.client_mute.ContainsKey(player.SteamID))
+                                {
+                                    Globals.client_mute[player.SteamID] = true;
+                                }
+                            }
+                            Helper.SaveToJsonFile(player.SteamID, personDataz.MusicKit!, personDataz.Client_Mute_MVP, DateTime.Now);
                         }
-                        if (result.Client_Mute_MVP)
-                        {
-                            Globals.client_mute[player.SteamID] = true;
-                        }
+                        
                     }
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"[MVP MySql] Error connecting: {ex.Message}");
+                    Console.WriteLine($"======================== ERROR =============================");
+                    Console.WriteLine($"An error occurred: {ex.Message}");
+                    Console.WriteLine($"======================== ERROR =============================");
                 }
-            });
+            }
+
+            Task.Run(PerformDatabaseOperationAsync);
         }
 
+        
+        
         return HookResult.Continue;
     }
-
-    [CommandHelper(minArgs: 0, usage: "", whoCanExecute: CommandUsage.CLIENT_ONLY)]
-    public void OnCommandMvp(CCSPlayerController? player, CommandInfo info)
-    {
-        if (player == null || !player.IsValid) return;
-        OpenMVPMenu(player);
-    }
-
     public HookResult OnCommandSay(CCSPlayerController? player, CommandInfo info)
     {
-        if (player == null || !player.IsValid) return HookResult.Continue;
-        var eventmessage = info.GetArg(1);
-        if (string.IsNullOrWhiteSpace(eventmessage)) return HookResult.Continue;
-        string message = eventmessage.Trim();
+        if (player == null || !player.IsValid || player.IsBot || player.IsHLTV) return HookResult.Continue;
+        var message = info.GetArg(1);
+        if (string.IsNullOrWhiteSpace(message)) return HookResult.Continue;
+
+        string trimmedMessage = message.Trim();
         string[] MVPInGameMenu = Configs.GetConfigData().MVP_InGameMenu.Split(',');
-        if (MVPInGameMenu.Any(cmd => cmd.Equals(message, StringComparison.OrdinalIgnoreCase)))
+        if (MVPInGameMenu.Any(cmd => cmd.Equals(trimmedMessage, StringComparison.OrdinalIgnoreCase)))
         {
-            OpenMVPMenu(player);
-            return HookResult.Handled;
+            OpenMvpMenu(player);
         }
         return HookResult.Continue;
     }
 
-    public void OpenMVPMenu(CCSPlayerController player)
+    private void HandleMenu(CCSPlayerController Player, ChatMenuOption option, string ChoosenKitKey, string HasFlag, bool isPreviewAble)
     {
-        if (player == null || !player.IsValid) return;
-        var playerSteamId = player.SteamID;
-
-        if (!string.IsNullOrEmpty(Configs.GetConfigData().MVP_OnlyAllowTheseGroupsCanMVP) && !Globals.allow_groups.ContainsKey(playerSteamId))
+        Helper.PersonData personData = Helper.RetrievePersonDataById(Player.SteamID);
+        var disabled = option.Text;
+        if(disabled == Localizer["menu.enabled"])
         {
-            string notAllowed = Localizer["player.not.allowed"];
-            if (!string.IsNullOrEmpty(notAllowed))
+            Globals.client_mute.Remove(Player.SteamID);
+            personData.Client_Mute_MVP = !personData.Client_Mute_MVP;
+            if(personData.Client_Mute_MVP)
             {
-                Helper.AdvancedPrintToChat(player, notAllowed);
+
+            }else
+            {
+                Helper.SaveToJsonFile(Player.SteamID, personData.MusicKit!, personData.Client_Mute_MVP, DateTime.Now);
             }
-            return;
-        }
-
-        Dictionary<string, Dictionary<string, object>>? mvpData = LoadMvpSettings();
-        if (mvpData == null || mvpData.Count == 0)
-        {
-            Helper.AdvancedPrintToChat(player, "{gold}[MVP] {grey}| {white}No MVP anthems are currently configured.");
-            return;
-        }
-
-        var mainMenu = BuildMainMenu(player, mvpData);
-        var state = new CMenuState
-        {
-            ActiveMenu = mainMenu,
-            SelectedIndex = 0,
-            ScrollOffset = 0,
-            OpenedAtUtc = DateTime.UtcNow,
-            IsDirty = true
-        };
-        _playerMenuStates[player.Slot] = state;
-    }
-
-    private Dictionary<string, Dictionary<string, object>>? LoadMvpSettings()
-    {
-        string[] possiblePaths = {
-            Path.Combine(ModuleDirectory, "config/MVP_Settings.json"),
-            Path.Combine(ModuleDirectory, "../../plugins/MVP-Sounds-GoldKingZ/config/MVP_Settings.json"),
-            Path.Combine(ModuleDirectory, "MVP_Settings.json")
-        };
-
-        foreach (var p in possiblePaths)
-        {
-            if (File.Exists(p))
+            
+            if(Configs.GetConfigData().MVP_UseMySql)
             {
-                try
-                {
-                    string json = File.ReadAllText(p);
-                    return JsonConvert.DeserializeObject<Dictionary<string, Dictionary<string, object>>>(json);
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"[MVP] Error reading {p}: {ex.Message}");
-                }
-            }
-        }
-        return null;
-    }
-
-    private CMenu BuildMainMenu(CCSPlayerController player, Dictionary<string, Dictionary<string, object>> data)
-    {
-        var menu = new CMenu("main", "MVP Anthems");
-        var personData = Helper.RetrievePersonDataById(player.SteamID);
-        bool isMuted = Globals.client_mute.ContainsKey(player.SteamID) || personData.Client_Mute_MVP;
-
-        string currentEquippedKey = string.Empty;
-        if (Globals.Choosed_MVP.TryGetValue(player.SteamID, out var key))
-        {
-            currentEquippedKey = key;
-        }
-        else if (!string.IsNullOrEmpty(personData.MusicKit))
-        {
-            currentEquippedKey = personData.MusicKit;
-        }
-
-        // Toggle Mute option
-        string muteText = isMuted ? "Sound: [MUTED]" : "Sound: [ACTIVE]";
-        menu.AddOption(muteText, p =>
-        {
-            ToggleMute(p);
-            // Refresh menu
-            var updatedData = LoadMvpSettings() ?? data;
-            if (_playerMenuStates.TryGetValue(p.Slot, out var st))
-            {
-                st.ActiveMenu = BuildMainMenu(p, updatedData);
-                st.IsDirty = true;
-            }
-        });
-
-        // Remove Anthem option
-        menu.AddOption("Remove Equipped MVP", p =>
-        {
-            RemoveEquippedAnthem(p);
-            var updatedData = LoadMvpSettings() ?? data;
-            if (_playerMenuStates.TryGetValue(p.Slot, out var st))
-            {
-                st.ActiveMenu = BuildMainMenu(p, updatedData);
-                st.IsDirty = true;
-            }
-        });
-
-        // List each configured anthem
-        foreach (var kvp in data)
-        {
-            string kitKey = kvp.Key;
-            var kitDict = kvp.Value;
-            string kitName = kitDict.ContainsKey("MVP_Kit_Name") ? kitDict["MVP_Kit_Name"]?.ToString() ?? kitKey : kitKey;
-            string hasFlag = kitDict.ContainsKey("FLAGS") ? kitDict["FLAGS"]?.ToString() ?? string.Empty : string.Empty;
-            bool isHidden = kitDict.ContainsKey("HIDDEN") && bool.TryParse(kitDict["HIDDEN"]?.ToString(), out bool hVal) && hVal;
-
-            if (isHidden && !string.IsNullOrEmpty(hasFlag) && !Helper.IsPlayerInGroupPermission(player, hasFlag))
-                continue;
-
-            bool isEquipped = !string.IsNullOrEmpty(currentEquippedKey) && currentEquippedKey.Equals(kitKey, StringComparison.OrdinalIgnoreCase);
-            string optionText = isEquipped ? $"● {kitName} [Equipped]" : kitName;
-
-            menu.AddOption(optionText, p =>
-            {
-                OpenTrackSubMenu(p, kitKey, kitName, kitDict, hasFlag);
-            });
-        }
-
-        // Exit
-        menu.AddOption("Exit Menu", p => CloseMenu(p));
-
-        return menu;
-    }
-
-    private void OpenTrackSubMenu(CCSPlayerController player, string kitKey, string kitName, Dictionary<string, object> kitDict, string hasFlag)
-    {
-        if (!_playerMenuStates.TryGetValue(player.Slot, out var state)) return;
-
-        bool hasAccess = string.IsNullOrEmpty(hasFlag) || Helper.IsPlayerInGroupPermission(player, hasFlag);
-        var subMenu = new CMenu($"track_{kitKey}", kitName);
-
-        // Option 1: Equip
-        if (hasAccess)
-        {
-            subMenu.AddOption("Equip Anthem", p =>
-            {
-                EquipAnthem(p, kitKey, kitName);
-                // Return to main menu
-                var data = LoadMvpSettings();
-                if (data != null && _playerMenuStates.TryGetValue(p.Slot, out var st))
-                {
-                    st.History.Clear();
-                    st.ActiveMenu = BuildMainMenu(p, data);
-                    st.SelectedIndex = 0;
-                    st.ScrollOffset = 0;
-                }
-            });
-        }
-        else
-        {
-            subMenu.AddOption("Equip Anthem (VIP Only)", p =>
-            {
-                Helper.AdvancedPrintToChat(p, "{gold}[MVP] {grey}| {darkred}You need VIP status to equip this anthem.");
-            }, disabled: true);
-        }
-
-        // Option 2: Preview
-        bool canPreview = kitDict.ContainsKey("CanBePreview") && bool.TryParse(kitDict["CanBePreview"]?.ToString(), out bool pVal) && pVal;
-        if (canPreview)
-        {
-            string soundPath = ExtractSoundPath(kitDict);
-            string soundEvent = ExtractSoundEvent(kitDict, soundPath);
-            if (!string.IsNullOrEmpty(soundPath) || !string.IsNullOrEmpty(soundEvent))
-            {
-                subMenu.AddOption("Preview Track (10s)", p =>
+                Task.Run(async () =>
                 {
                     try
                     {
-                        if (p == null || !p.IsValid || p.IsBot) return;
-
-                        if (_previewCooldowns.TryGetValue(p.Slot, out var cd) && DateTime.UtcNow < cd)
+                        var connectionSettings = JsonConvert.DeserializeObject<MySqlDataManager.MySqlConnectionSettings>(await File.ReadAllTextAsync(Path.Combine(Path.Combine(ModuleDirectory, "config"), "MySql_Settings.json")));
+                        var connectionString = new MySqlConnectionStringBuilder
                         {
-                            Helper.AdvancedPrintToChat(p, "{gold}[MVP] {grey}| {white}Please wait before previewing again.");
-                            return;
-                        }
-                        _previewCooldowns[p.Slot] = DateTime.UtcNow.AddSeconds(2);
+                            Server = connectionSettings!.MySqlHost,
+                            Port = (uint)connectionSettings.MySqlPort,
+                            Database = connectionSettings.MySqlDatabase,
+                            UserID = connectionSettings.MySqlUsername,
+                            Password = connectionSettings.MySqlPassword
+                        }.ConnectionString;
+                        
+                        using (var connection = new MySqlConnection(connectionString))
+                        {
+                            await connection.OpenAsync();
+                            await MySqlDataManager.CreatePersonDataTableIfNotExistsAsync(connection);
 
-                        Helper.AdvancedPrintToChat(p, "{gold}[MVP] {grey}| {white}Previewing: {gold}{0}{white}...", kitName);
-                        PlaySoundToPlayer(p, soundEvent, soundPath);
+                            DateTime personDate = DateTime.Now;
+                            var personData = Helper.RetrievePersonDataById(Player.SteamID);
+                            if (personData.PlayerSteamID != 0)
+                            {
+                                await MySqlDataManager.SaveToMySqlAsync(Player.SteamID, personData.MusicKit!, false, personDate, connection, connectionSettings);
+                            }
+                        }
                     }
                     catch (Exception ex)
                     {
-                        Console.WriteLine($"[MVP Preview Error] {ex.Message}");
+                        Console.WriteLine($"======================== ERROR =============================");
+                        Console.WriteLine($"An error occurred: {ex.Message}");
+                        Console.WriteLine($"======================== ERROR =============================");
                     }
                 });
             }
-        }
-
-        // Option 3: Back
-        subMenu.AddOption("Back", p =>
-        {
-            if (_playerMenuStates.TryGetValue(p.Slot, out var st))
+            if (!string.IsNullOrEmpty(Localizer["player.musickit.enabled"]))
             {
-                NavigateBack(p, st);
+                Helper.AdvancedPrintToChat(Player, Localizer["player.musickit.enabled"], option.Text);
             }
-        });
-
-        subMenu.CustomBackAction = p =>
+            MenuManager.CloseActiveMenu(Player);
+            return;
+        }
+        if(disabled == Localizer["menu.disabled"])
         {
-            if (_playerMenuStates.TryGetValue(p.Slot, out var st))
+            if (!string.IsNullOrEmpty(Configs.GetConfigData().MVP_OnlyAllowTheseGroupsCanToggleOffMVP) && !Globals.client_cantoggle.ContainsKey(Player.SteamID))
             {
-                NavigateBack(p, st);
-            }
-        };
-
-        if (state.ActiveMenu != null)
-        {
-            state.History.Push(state.ActiveMenu);
-        }
-        state.ActiveMenu = subMenu;
-        state.SelectedIndex = 0;
-        state.ScrollOffset = 0;
-        state.IsDirty = true;
-    }
-
-    private static string ExtractSoundPath(Dictionary<string, object> kitDict)
-    {
-        if (kitDict.ContainsKey("Sound_Path_1") && kitDict["Sound_Path_1"] != null)
-            return kitDict["Sound_Path_1"].ToString() ?? string.Empty;
-        if (kitDict.ContainsKey("Sound_Path") && kitDict["Sound_Path"] != null)
-            return kitDict["Sound_Path"].ToString() ?? string.Empty;
-        return string.Empty;
-    }
-
-    private static string ExtractSoundEvent(Dictionary<string, object> kitDict, string soundPath)
-    {
-        if (kitDict.ContainsKey("Sound_Event") && kitDict["Sound_Event"] != null)
-        {
-            string ev = kitDict["Sound_Event"].ToString() ?? string.Empty;
-            if (!string.IsNullOrEmpty(ev)) return ev;
-        }
-
-        if (!string.IsNullOrEmpty(soundPath))
-        {
-            string fileName = Path.GetFileName(soundPath);
-            if (fileName.EndsWith(".vsnd_c", StringComparison.OrdinalIgnoreCase))
-                fileName = fileName[..^7];
-            else if (fileName.EndsWith(".vsnd", StringComparison.OrdinalIgnoreCase))
-                fileName = fileName[..^5];
-            return $"CustomMVP.{fileName}";
-        }
-
-        return string.Empty;
-    }
-
-    private static void PlaySoundToPlayer(CCSPlayerController player, string soundEvent, string soundPath)
-    {
-        try
-        {
-            if (player == null || !player.IsValid || player.IsBot || player.IsHLTV)
-                return;
-
-            string soundToPlay = !string.IsNullOrEmpty(soundPath) ? soundPath : soundEvent;
-            if (string.IsNullOrEmpty(soundToPlay)) return;
-
-            if (soundToPlay.EndsWith(".vsnd_c", StringComparison.OrdinalIgnoreCase))
-                soundToPlay = soundToPlay[..^2];
-
-            soundToPlay = soundToPlay.Trim().Replace("\"", "").Replace(";", "");
-
-            player.ExecuteClientCommand($"play {soundToPlay}");
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[MVP Sound Error] Failed to play sound: {ex.Message}");
-        }
-    }
-
-    private void EquipAnthem(CCSPlayerController player, string kitKey, string kitName)
-    {
-        Globals.Choosed_MVP[player.SteamID] = kitKey;
-        var personData = Helper.RetrievePersonDataById(player.SteamID);
-        Helper.SaveToJsonFile(player.SteamID, kitKey, personData.Client_Mute_MVP, DateTime.Now);
-
-        if (Configs.GetConfigData().MVP_UseMySql)
-        {
-            SaveToMySqlAsync(player.SteamID, kitKey, personData.Client_Mute_MVP);
-        }
-
-        Helper.AdvancedPrintToChat(player, "{gold}[MVP] {grey}| {white}Equipped anthem: {gold}{0}", kitName);
-    }
-
-    private void RemoveEquippedAnthem(CCSPlayerController player)
-    {
-        Globals.Choosed_MVP.Remove(player.SteamID);
-        var personData = Helper.RetrievePersonDataById(player.SteamID);
-        Helper.SaveToJsonFile(player.SteamID, string.Empty, personData.Client_Mute_MVP, DateTime.Now);
-
-        if (Configs.GetConfigData().MVP_UseMySql)
-        {
-            SaveToMySqlAsync(player.SteamID, string.Empty, personData.Client_Mute_MVP);
-        }
-
-        Helper.AdvancedPrintToChat(player, "{gold}[MVP] {grey}| {white}Removed your equipped MVP anthem.");
-    }
-
-    private void ToggleMute(CCSPlayerController player)
-    {
-        var personData = Helper.RetrievePersonDataById(player.SteamID);
-        bool currentlyMuted = Globals.client_mute.ContainsKey(player.SteamID) || personData.Client_Mute_MVP;
-
-        if (currentlyMuted)
-        {
-            Globals.client_mute.Remove(player.SteamID);
-            personData.Client_Mute_MVP = false;
-            Helper.SaveToJsonFile(player.SteamID, personData.MusicKit ?? string.Empty, false, DateTime.Now);
-            if (Configs.GetConfigData().MVP_UseMySql)
-            {
-                SaveToMySqlAsync(player.SteamID, personData.MusicKit ?? string.Empty, false);
-            }
-            Helper.AdvancedPrintToChat(player, "{gold}[MVP] {grey}| {white}MVP sounds {green}ENABLED{white}.");
-        }
-        else
-        {
-            if (!string.IsNullOrEmpty(Configs.GetConfigData().MVP_OnlyAllowTheseGroupsCanToggleOffMVP) && !Globals.client_cantoggle.ContainsKey(player.SteamID))
-            {
-                Helper.AdvancedPrintToChat(player, "{gold}[MVP] {grey}| {darkred}You do not have permission to mute MVP sounds.");
+                if (!string.IsNullOrEmpty(Localizer["player.disabled.not.allowed"]))
+                {
+                    Helper.AdvancedPrintToChat(Player, Localizer["player.disabled.not.allowed"]);
+                }
+                MenuManager.CloseActiveMenu(Player);
                 return;
             }
-
-            Globals.client_mute[player.SteamID] = true;
-            personData.Client_Mute_MVP = true;
-            Helper.SaveToJsonFile(player.SteamID, personData.MusicKit ?? string.Empty, true, DateTime.Now);
-            if (Configs.GetConfigData().MVP_UseMySql)
+            if (!Globals.client_mute.ContainsKey(Player.SteamID))
             {
-                SaveToMySqlAsync(player.SteamID, personData.MusicKit ?? string.Empty, true);
+                Globals.client_mute.Add(Player.SteamID, true);
             }
-            Helper.AdvancedPrintToChat(player, "{gold}[MVP] {grey}| {white}MVP sounds {red}MUTED{white}.");
-        }
-    }
-
-    private void SaveToMySqlAsync(ulong steamId, string kitKey, bool isMuted)
-    {
-        Task.Run(async () =>
-        {
-            try
+            if (Globals.client_mute.ContainsKey(Player.SteamID))
             {
-                string mysqlPath = Path.Combine(ModuleDirectory, "config/MySql_Settings.json");
-                if (!File.Exists(mysqlPath)) return;
-                var connectionSettings = JsonConvert.DeserializeObject<MySqlDataManager.MySqlConnectionSettings>(await File.ReadAllTextAsync(mysqlPath));
-                if (connectionSettings == null) return;
-
-                var connectionString = new MySqlConnectionStringBuilder
+                Globals.client_mute[Player.SteamID] = true;
+            }
+            
+            personData.Client_Mute_MVP = !personData.Client_Mute_MVP;
+            if(personData.Client_Mute_MVP)
+            {
+                Helper.SaveToJsonFile(Player.SteamID, personData.MusicKit!, personData.Client_Mute_MVP, DateTime.Now);
+            }else
+            {
+                
+            }
+            if(Configs.GetConfigData().MVP_UseMySql)
+            {
+                Task.Run(async () =>
                 {
-                    Server = connectionSettings.MySqlHost,
-                    Port = (uint)connectionSettings.MySqlPort,
-                    Database = connectionSettings.MySqlDatabase,
-                    UserID = connectionSettings.MySqlUsername,
-                    Password = connectionSettings.MySqlPassword
-                }.ConnectionString;
+                    try
+                    {
+                        var connectionSettings = JsonConvert.DeserializeObject<MySqlDataManager.MySqlConnectionSettings>(await File.ReadAllTextAsync(Path.Combine(Path.Combine(ModuleDirectory, "config"), "MySql_Settings.json")));
+                        var connectionString = new MySqlConnectionStringBuilder
+                        {
+                            Server = connectionSettings!.MySqlHost,
+                            Port = (uint)connectionSettings.MySqlPort,
+                            Database = connectionSettings.MySqlDatabase,
+                            UserID = connectionSettings.MySqlUsername,
+                            Password = connectionSettings.MySqlPassword
+                        }.ConnectionString;
+                        
+                        using (var connection = new MySqlConnection(connectionString))
+                        {
+                            await connection.OpenAsync();
+                            await MySqlDataManager.CreatePersonDataTableIfNotExistsAsync(connection);
 
-                using var connection = new MySqlConnection(connectionString);
-                await connection.OpenAsync();
-                await MySqlDataManager.SaveToMySqlAsync(steamId, kitKey, isMuted, DateTime.Now, connection, connectionSettings);
+                            DateTime personDate = DateTime.Now;
+                            var personData = Helper.RetrievePersonDataById(Player.SteamID);
+                            if (personData.PlayerSteamID != 0)
+                            {
+                                await MySqlDataManager.SaveToMySqlAsync(Player.SteamID, personData.MusicKit!, true, personDate, connection, connectionSettings);
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"======================== ERROR =============================");
+                        Console.WriteLine($"An error occurred: {ex.Message}");
+                        Console.WriteLine($"======================== ERROR =============================");
+                    }
+                });
             }
-            catch (Exception ex)
+            if (!string.IsNullOrEmpty(Localizer["player.musickit.disabled"]))
             {
-                Console.WriteLine($"[MVP MySql] Error saving: {ex.Message}");
+                Helper.AdvancedPrintToChat(Player, Localizer["player.musickit.disabled"], option.Text);
             }
-        });
-    }
-
-    public void OnTick()
-    {
-        // 1. Render MVP banners if active
-        if (Globals.Show_Center || Globals.Show_Center_Bottom)
-        {
-            foreach (var player in Helper.GetAllController())
-            {
-                if (player == null || !player.IsValid || player.IsBot || player.IsHLTV || Globals.client_mute.ContainsKey(player.SteamID))
-                    continue;
-
-                if (Globals.Show_Center)
-                {
-                    var sb = new StringBuilder();
-                    sb.AppendLine(Globals.MVP_Locaraize_Center);
-                    sb.AppendLine("</div>");
-                    player.PrintToCenterHtml(sb.ToString());
-                }
-                if (Globals.Show_Center_Bottom)
-                {
-                    player.PrintToCenter(Globals.MVP_Locaraize_Center_Bottom);
-                }
-            }
-        }
-
-        // 2. Process WASD menu navigation & rendering
-        if (_playerMenuStates.Count == 0) return;
-        var now = DateTime.UtcNow;
-
-        var slotsToRemove = new List<int>();
-        foreach (var (slot, state) in _playerMenuStates)
-        {
-            var player = Utilities.GetPlayerFromSlot(slot);
-            if (player == null || !player.IsValid || player.IsBot)
-            {
-                slotsToRemove.Add(slot);
-                continue;
-            }
-
-            if (state.ActiveMenu == null)
-            {
-                slotsToRemove.Add(slot);
-                continue;
-            }
-
-            // Read player buttons
-            var buttons = player.Buttons;
-            var prev = state.PreviousButtons;
-
-            // Exit button (A / Moveleft or R / Reload)
-            if (HasButtonJustPressed(PlayerButtons.Moveleft, buttons, prev) || HasButtonJustPressed(PlayerButtons.Reload, buttons, prev))
-            {
-                state.PreviousButtons = buttons;
-                NavigateBack(player, state);
-                continue;
-            }
-
-            // Select button (E / Use)
-            if (HasButtonJustPressed(PlayerButtons.Use, buttons, prev))
-            {
-                state.PreviousButtons = buttons;
-                SelectCurrentOption(player, state);
-                continue;
-            }
-
-            // Scroll Up (W / Forward) / Down (S / Back)
-            bool upActive = buttons.HasFlag(PlayerButtons.Forward);
-            bool upJustPressed = upActive && !prev.HasFlag(PlayerButtons.Forward);
-
-            bool downActive = buttons.HasFlag(PlayerButtons.Back);
-            bool downJustPressed = downActive && !prev.HasFlag(PlayerButtons.Back);
-
-            if (upJustPressed)
-            {
-                MoveSelection(state, -1);
-                state.NextScrollRepeatUtc = now.AddMilliseconds(250);
-            }
-            else if (downJustPressed)
-            {
-                MoveSelection(state, 1);
-                state.NextScrollRepeatUtc = now.AddMilliseconds(250);
-            }
-            else if (upActive && now >= state.NextScrollRepeatUtc)
-            {
-                MoveSelection(state, -1);
-                state.NextScrollRepeatUtc = now.AddMilliseconds(90);
-            }
-            else if (downActive && now >= state.NextScrollRepeatUtc)
-            {
-                MoveSelection(state, 1);
-                state.NextScrollRepeatUtc = now.AddMilliseconds(90);
-            }
-
-            state.PreviousButtons = buttons;
-
-            // Throttle rendering to only when state is dirty OR every 180ms to refresh the display,
-            // preventing network send queue starvation / buffer overflow (64Hz unthrottled flooding).
-            if (!Globals.Show_Center)
-            {
-                if (state.IsDirty || (now - state.LastRenderTimeUtc).TotalMilliseconds >= 180)
-                {
-                    RenderMenu(player, state);
-                    state.IsDirty = false;
-                    state.LastRenderTimeUtc = now;
-                }
-            }
-        }
-
-        foreach (var s in slotsToRemove)
-        {
-            _playerMenuStates.Remove(s);
-        }
-    }
-
-    private static bool HasButtonJustPressed(PlayerButtons btn, PlayerButtons current, PlayerButtons previous)
-    {
-        return current.HasFlag(btn) && !previous.HasFlag(btn);
-    }
-
-    private static void MoveSelection(CMenuState state, int direction)
-    {
-        var menu = state.ActiveMenu;
-        if (menu == null || menu.Options.Count == 0) return;
-        int count = menu.Options.Count;
-        int idx = state.SelectedIndex;
-        for (int i = 0; i < count; i++)
-        {
-            idx = (idx + direction + count) % count;
-            if (!menu.Options[idx].Disabled)
-            {
-                if (state.SelectedIndex != idx)
-                {
-                    state.SelectedIndex = idx;
-                    state.IsDirty = true;
-                }
-                return;
-            }
-        }
-    }
-
-    private static void SelectCurrentOption(CCSPlayerController player, CMenuState state)
-    {
-        var menu = state.ActiveMenu;
-        if (menu == null || menu.Options.Count == 0) return;
-        var option = menu.Options[Math.Clamp(state.SelectedIndex, 0, menu.Options.Count - 1)];
-        if (option.Disabled) return;
-        state.IsDirty = true;
-        option.Callback(player);
-    }
-
-    private void NavigateBack(CCSPlayerController player, CMenuState state)
-    {
-        state.IsDirty = true;
-        var current = state.ActiveMenu;
-        if (current?.CustomBackAction != null)
-        {
-            current.CustomBackAction.Invoke(player);
+            MenuManager.CloseActiveMenu(Player);
             return;
         }
 
-        if (state.History.Count == 0)
+        if(disabled == Localizer["menu.remove"])
         {
-            CloseMenu(player);
+            Globals.Choosed_MVP.Remove(Player.SteamID);
+            
+            Helper.SaveToJsonFile(Player.SteamID, disabled, personData.Client_Mute_MVP, DateTime.Now);
+            if(Configs.GetConfigData().MVP_UseMySql)
+            {
+                Task.Run(async () =>
+                {
+                    try
+                    {
+                        var connectionSettings = JsonConvert.DeserializeObject<MySqlDataManager.MySqlConnectionSettings>(await File.ReadAllTextAsync(Path.Combine(Path.Combine(ModuleDirectory, "config"), "MySql_Settings.json")));
+                        var connectionString = new MySqlConnectionStringBuilder
+                        {
+                            Server = connectionSettings!.MySqlHost,
+                            Port = (uint)connectionSettings.MySqlPort,
+                            Database = connectionSettings.MySqlDatabase,
+                            UserID = connectionSettings.MySqlUsername,
+                            Password = connectionSettings.MySqlPassword
+                        }.ConnectionString;
+                        
+                        using (var connection = new MySqlConnection(connectionString))
+                        {
+                            await MySqlDataManager.RemoveFromMySqlAsync(Player.SteamID, connection, connectionSettings);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"An error occurred while removing data from MySQL: {ex.Message}");
+                    }
+                });
+            }
+            if (!string.IsNullOrEmpty(Localizer["player.musickit.remove"]))
+            {
+                Helper.AdvancedPrintToChat(Player, Localizer["player.musickit.remove"], option.Text);
+            }
+            MenuManager.CloseActiveMenu(Player);
             return;
         }
-
-        state.ActiveMenu = state.History.Pop();
-        state.SelectedIndex = Math.Clamp(state.SelectedIndex, 0, Math.Max(0, (state.ActiveMenu?.Options.Count ?? 1) - 1));
-        state.ScrollOffset = 0;
-    }
-
-    public void CloseMenu(CCSPlayerController player)
-    {
-        _playerMenuStates.Remove(player.Slot);
-        player.PrintToCenterHtml(" ");
-    }
-
-    private static void RenderMenu(CCSPlayerController player, CMenuState state)
-    {
-        var menu = state.ActiveMenu;
-        if (menu == null) return;
-
-        const int visible = 4;
-        int total = menu.Options.Count;
-        int selected = Math.Clamp(state.SelectedIndex, 0, Math.Max(0, total - 1));
-
-        if (selected < state.ScrollOffset)
-            state.ScrollOffset = selected;
-        else if (selected >= state.ScrollOffset + visible)
-            state.ScrollOffset = selected - visible + 1;
-
-        state.ScrollOffset = Math.Clamp(state.ScrollOffset, 0, Math.Max(0, total - visible));
-        int start = state.ScrollOffset;
-        int end = Math.Min(total, start + visible);
-
-        var sb = new StringBuilder();
-        sb.Append($"<b><font color='#facc15' class='fontSize-m'>{menu.Title}</font></b> <font color='#9ca3af' class='fontSize-s'>[{selected + 1}/{total}]</font><br>");
-
-        for (int i = start; i < end; i++)
+        
+        if(!string.IsNullOrEmpty(HasFlag) && !Helper.IsPlayerInGroupPermission(Player, HasFlag) && !isPreviewAble)
         {
-            var opt = menu.Options[i];
-            string text = opt.Text;
-            bool isSelected = i == selected;
-            if (opt.Disabled)
+            if (!string.IsNullOrEmpty(Localizer["player.not.allowed.musickit.flag"]))
             {
-                sb.Append($"<font color='#6b7280' class='fontSize-s'>&nbsp;&nbsp;{text}</font><br>");
+                Helper.AdvancedPrintToChat(Player, Localizer["player.not.allowed.musickit.flag"]);
             }
-            else if (isSelected)
+            MenuManager.CloseActiveMenu(Player);
+            return;
+        }
+        
+        if(isPreviewAble)
+        {
+            var choosedkit =  option.Text;
+            
+            IMenu VoteGameModeMenu;
+            if (Configs.GetConfigData().MVP_ChangeMVPMenuFromChatToCentre)
             {
-                sb.Append($"<b><font color='#facc15' class='fontSize-s'>&gt; </font><font color='#ffffff' class='fontSize-s'>{text}</font></b><br>");
+                VoteGameModeMenu = new CenterHtmlMenu(Localizer["menu.are.you.sure", choosedkit], this);
             }
             else
             {
-                sb.Append($"<font color='#d1d5db' class='fontSize-s'>&nbsp;&nbsp;{text}</font><br>");
+                VoteGameModeMenu = new ChatMenu(Localizer["menu.are.you.sure", choosedkit]);
             }
+
+            string[] answers = { Localizer["menu.answer.yes"], Localizer["menu.answer.no"]};
+
+            foreach (string answer in answers)
+            {
+                VoteGameModeMenu.AddMenuOption(answer, (Player, option) => HandleMenu2(Player, option, ChoosenKitKey, HasFlag, isPreviewAble, choosedkit));
+            }
+            VoteGameModeMenu.AddMenuOption(Localizer["menu.back"], (Player, option) => HandleMenu2(Player, option, ChoosenKitKey, HasFlag, isPreviewAble, choosedkit));
+            if (Configs.GetConfigData().MVP_ChangeMVPMenuFromChatToCentre)
+            {
+                if (VoteGameModeMenu is CenterHtmlMenu centerHtmlMenu)
+                {
+                    MenuManager.OpenCenterHtmlMenu(this, Player, centerHtmlMenu);
+                }
+            }
+            else
+            {
+                if (VoteGameModeMenu is ChatMenu chatMenu)
+                {
+                    MenuManager.OpenChatMenu(Player, chatMenu);
+                }
+            }
+            return;
+        }
+        if (!Globals.Choosed_MVP.ContainsKey(Player.SteamID))
+        {
+            Globals.Choosed_MVP.Add(Player.SteamID, ChoosenKitKey);
+        }
+        if (Globals.Choosed_MVP.ContainsKey(Player.SteamID))
+        {
+            Globals.Choosed_MVP[Player.SteamID] = ChoosenKitKey;
+        }
+        if (!string.IsNullOrEmpty(Localizer["player.musickit.selected"]))
+        {
+            Helper.AdvancedPrintToChat(Player, Localizer["player.musickit.selected"], option.Text);
         }
 
-        bool canGoBack = state.History.Count > 0 || menu.CustomBackAction != null;
-        string footer = canGoBack
-            ? "<font color='#9ca3af' class='fontSize-s'>[W/S] Move &nbsp;[E] Select &nbsp;[A] Back</font>"
-            : "<font color='#9ca3af' class='fontSize-s'>[W/S] Move &nbsp;[E] Select &nbsp;[A/R] Exit</font>";
-
-        sb.Append(footer);
-        player.PrintToCenterHtml(sb.ToString());
+        Helper.SaveToJsonFile(Player.SteamID, ChoosenKitKey, personData.Client_Mute_MVP, DateTime.Now);
+        MenuManager.CloseActiveMenu(Player);
     }
+    private void HandleMenu2(CCSPlayerController Player, ChatMenuOption option, string ChoosenKitKey, string HasFlag, bool isPreviewAble, string choosedkit)
+    {
+        Helper.PersonData personData = Helper.RetrievePersonDataById(Player.SteamID);
+        if(option.Text == Localizer["menu.answer.yes"])
+        {
+            if(!string.IsNullOrEmpty(HasFlag) && !Helper.IsPlayerInGroupPermission(Player, HasFlag))
+            {
+                if (!string.IsNullOrEmpty(Localizer["player.not.allowed.musickit.flag"]))
+                {
+                    Helper.AdvancedPrintToChat(Player, Localizer["player.not.allowed.musickit.flag"]);
+                }
+                MenuManager.CloseActiveMenu(Player);
+                return;
+            }
+            if (!Globals.Choosed_MVP.ContainsKey(Player.SteamID))
+            {
+                Globals.Choosed_MVP.Add(Player.SteamID, ChoosenKitKey);
+            }
+            if (Globals.Choosed_MVP.ContainsKey(Player.SteamID))
+            {
+                Globals.Choosed_MVP[Player.SteamID] = ChoosenKitKey;
+            }
+            if (!string.IsNullOrEmpty(Localizer["player.musickit.selected"]))
+            {
+                Helper.AdvancedPrintToChat(Player, Localizer["player.musickit.selected"], choosedkit);
+            }
+            Helper.SaveToJsonFile(Player.SteamID, ChoosenKitKey, personData.Client_Mute_MVP, DateTime.Now);
+            MenuManager.CloseActiveMenu(Player);
+        }else if(option.Text == Localizer["menu.answer.no"])
+        {
+            string MVPKitChoosen = ChoosenKitKey;
+            try
+            {
+                string jsonPath = GetMvpSettingsPath();
+                string jsonContent = File.ReadAllText(jsonPath);
+                dynamic mvpSettings = JsonConvert.DeserializeObject(jsonContent)!;
+                var chosenKit = mvpSettings[MVPKitChoosen];
+                string kitName = chosenKit["MVP_Kit_Name"];
+
+                List<string> soundPaths = new List<string>();
+                int soundPathCount = 0;
+                while (chosenKit[$"Sound_Path_{soundPathCount + 1}"] != null)
+                {
+                    soundPathCount++;
+                }
+
+                for (int i = 1; i <= soundPathCount; i++)
+                {
+                    string soundPathKey = $"Sound_Path_{i}";
+                    if (chosenKit[soundPathKey] != null)
+                    {
+                        string soundPathValue = chosenKit[soundPathKey];
+                        soundPaths.Add(soundPathValue);
+                    }
+                }
+
+                Random rng = new Random();
+                string soundPath = soundPaths.FirstOrDefault(path => !Globals.playedPaths.Contains(path))!;
+                
+                if (Globals.playedPaths.Count == soundPaths.Count)
+                {
+                    Globals.playedPaths.Clear();
+                }
+                if (Globals.playedPaths.Count == 0)
+                {
+                    soundPaths = soundPaths.OrderBy(x => rng.Next()).ToList();
+                }
+                if (soundPath == null || Globals.playedPaths.Count == 0)
+                {
+                    soundPath = soundPaths.FirstOrDefault(path => !Globals.playedPaths.Contains(path))!;
+                }
+
+                if (soundPath != null)
+                {
+                    if (!string.IsNullOrEmpty(Localizer["player.preview"]))
+                    {
+                        Helper.AdvancedPrintToChat(Player, Localizer["player.preview"], choosedkit);
+                    }
+                    string pSound = soundPath.EndsWith(".vsnd_c", StringComparison.OrdinalIgnoreCase) ? soundPath[..^2] : soundPath;
+                    Player.ExecuteClientCommand("play " + pSound);
+                    Globals.playedPaths.Add(soundPath);
+                }
+            }
+            catch { }
+        }else if(option.Text == Localizer["menu.back"])
+        {
+            OpenMvpMenu(Player);
+        }
+    }
+
+    private HookResult OnEventRoundMvp(EventRoundMvp @event, GameEventInfo info)
+    {
+        if(@event == null)return HookResult.Continue;
+        var Player = @event.Userid;
+        if (Player == null || !Player.IsValid)return HookResult.Continue;
+        var PlayerSteamID = Player.SteamID;
+
+        if(Configs.GetConfigData().MVP_ForceDisableDefaultMVP_ToAll)
+        {   var allplayerz = Helper.GetAllController();
+            allplayerz.ForEach(playerz =>
+            {
+                if (playerz != null && playerz.IsValid && !playerz.IsBot)
+                {
+                    playerz.MVPs = 0;
+                }
+            });
+        }
+
+        if (Globals.Choosed_MVP.ContainsKey(PlayerSteamID))
+        {
+            Player.MVPs = 0;
+            string MVPKitChoosen = Globals.Choosed_MVP[PlayerSteamID];
+
+            try
+            {
+                string jsonPath = GetMvpSettingsPath();
+                string jsonContent = File.ReadAllText(jsonPath);
+                dynamic mvpSettings = JsonConvert.DeserializeObject(jsonContent)!;
+                var chosenKit = mvpSettings[MVPKitChoosen];
+                string kitName = chosenKit["MVP_Kit_Name"];
+                Globals.MVP_PlayerName = Player.PlayerName;
+                Globals.MVP_KitName = kitName;
+                bool custommessage = chosenKit["Custom_Message"] != null ? (bool)chosenKit["Custom_Message"] : false;
+                bool messageChatEnabled = chosenKit["Message_Chat"] != null ? (bool)chosenKit["Message_Chat"] : false;
+
+                bool messageCenterEnabled = chosenKit["Message_Center"] != null ? (bool)chosenKit["Message_Center"] : false;
+                float messageCenterInSecs = chosenKit["Message_Center_InSecs"] != null ? (float)chosenKit["Message_Center_InSecs"] : 10;
+
+                bool messageCenterBottomEnabled = chosenKit["Message_Center_Bottom"] != null ? (bool)chosenKit["Message_Center_Bottom"] : false;
+                float messageCenterBottomInSecs = chosenKit["Message_Center_Bottom_InSecs"] != null ? (float)chosenKit["Message_Center_Bottom_InSecs"] : 10;
+
+                List<string> soundPaths = new List<string>();
+                int soundPathCount = 0;
+                while (chosenKit[$"Sound_Path_{soundPathCount + 1}"] != null)
+                {
+                    soundPathCount++;
+                }
+
+                for (int i = 1; i <= soundPathCount; i++)
+                {
+                    string soundPathKey = $"Sound_Path_{i}";
+                    if (chosenKit[soundPathKey] != null)
+                    {
+                        string soundPathValue = chosenKit[soundPathKey];
+                        soundPaths.Add(soundPathValue);
+                    }
+                }
+
+                Random rng = new Random();
+                string soundPath = soundPaths.FirstOrDefault(path => !Globals.playedPaths.Contains(path))!;
+                
+                if (Globals.playedPaths.Count == soundPaths.Count)
+                {
+                    Globals.playedPaths.Clear();
+                }
+                if (Globals.playedPaths.Count == 0)
+                {
+                    soundPaths = soundPaths.OrderBy(x => rng.Next()).ToList();
+                }
+                if (soundPath == null || Globals.playedPaths.Count == 0)
+                {
+                    soundPath = soundPaths.FirstOrDefault(path => !Globals.playedPaths.Contains(path))!;
+                }
+                
+                var allplayers = Helper.GetAllController();
+                allplayers.ForEach(players =>
+                {
+                    if (players != null && players.IsValid && !players.IsBot && !Globals.client_mute.ContainsKey(players.SteamID))
+                    {
+                        if (soundPath != null)
+                        {
+                            
+                            if(custommessage)
+                            {
+                                if(messageChatEnabled)
+                                {
+                                    if (!string.IsNullOrEmpty(Localizer[MVPKitChoosen + ".now.playing.chat"]))
+                                    {
+                                        Helper.AdvancedPrintToChat(players, Localizer[MVPKitChoosen + ".now.playing.chat"], Player.PlayerName, kitName);
+                                    }
+                                }
+                                
+
+                                if(messageCenterEnabled)
+                                {
+                                    Globals.Show_Center = true;
+                                    Globals.MVP_Locaraize_Center = Localizer[MVPKitChoosen + ".now.playing.centre", Globals.MVP_PlayerName, Globals.MVP_KitName];
+                                    HUDTimer_Center?.Kill();
+                                    HUDTimer_Center = null;
+                                    HUDTimer_Center = AddTimer(messageCenterInSecs, HUDTimer_Center_Callback, TimerFlags.STOP_ON_MAPCHANGE);
+                                }
+
+                                if(messageCenterBottomEnabled)
+                                {
+                                    Globals.Show_Center_Bottom = true;
+                                    Globals.MVP_Locaraize_Center_Bottom = Localizer[MVPKitChoosen + ".now.playing.centre.bottom", Globals.MVP_PlayerName, Globals.MVP_KitName];
+                                    HUDTimer_Center_Bottom?.Kill();
+                                    HUDTimer_Center_Bottom = null;
+                                    HUDTimer_Center_Bottom = AddTimer(messageCenterBottomInSecs, HUDTimer_Center_Bottom_Callback, TimerFlags.STOP_ON_MAPCHANGE);
+                                }
+                            }else
+                            {
+                                if(messageChatEnabled)
+                                {
+                                    if (!string.IsNullOrEmpty(Localizer["now.playing.chat"]))
+                                    {
+                                        Helper.AdvancedPrintToChat(players, Localizer["now.playing.chat"], Player.PlayerName, kitName);
+                                    }
+                                }
+                                
+
+                                if(messageCenterEnabled)
+                                {
+                                    Globals.Show_Center = true;
+                                    Globals.MVP_Locaraize_Center = Localizer["now.playing.centre", Globals.MVP_PlayerName, Globals.MVP_KitName];
+                                    HUDTimer_Center?.Kill();
+                                    HUDTimer_Center = null;
+                                    HUDTimer_Center = AddTimer(messageCenterInSecs, HUDTimer_Center_Callback, TimerFlags.STOP_ON_MAPCHANGE);
+                                }
+
+                                if(messageCenterBottomEnabled)
+                                {
+                                    Globals.Show_Center_Bottom = true;
+                                    Globals.MVP_Locaraize_Center_Bottom = Localizer["now.playing.centre.bottom", Globals.MVP_PlayerName, Globals.MVP_KitName];
+                                    HUDTimer_Center_Bottom?.Kill();
+                                    HUDTimer_Center_Bottom = null;
+                                    HUDTimer_Center_Bottom = AddTimer(messageCenterBottomInSecs, HUDTimer_Center_Bottom_Callback, TimerFlags.STOP_ON_MAPCHANGE);
+                                }
+                            }
+                            string pSound = soundPath.EndsWith(".vsnd_c", StringComparison.OrdinalIgnoreCase) ? soundPath[..^2] : soundPath;
+                            players.ExecuteClientCommand("play " + pSound);
+                            Globals.playedPaths.Add(soundPath);
+                        }
+                    }
+                });
+                
+            }
+            catch { }
+        }
+        return HookResult.Continue;
+    }
+    private void HUDTimer_Center_Callback()
+    {
+        Globals.Show_Center = false;
+    }
+    private void HUDTimer_Center_Bottom_Callback()
+    {
+        Globals.Show_Center_Bottom = false;
+    }
+    public void OnTick()
+    {
+        if(Globals.Show_Center || Globals.Show_Center_Bottom)
+        {
+            foreach (var player in Helper.GetAllController())
+            {
+                if (player == null || !player.IsValid || player.IsBot || player.IsHLTV || Globals.client_mute.ContainsKey(player.SteamID)) continue;
+                if(Globals.Show_Center)
+                {
+                    StringBuilder builder = new StringBuilder();
+                    string Show_Center = Globals.MVP_Locaraize_Center;
+                    builder.AppendLine(Show_Center);
+                    builder.AppendLine("</div>");
+                    var centerhtml = builder.ToString();
+                    player.PrintToCenterHtml(centerhtml);
+                }
+                if(Globals.Show_Center_Bottom)
+                {
+                    StringBuilder builder = new StringBuilder();
+                    string Show_Center_bottom = Globals.MVP_Locaraize_Center_Bottom;
+                    builder.Append(Show_Center_bottom);
+                    var centerhtml = builder.ToString();
+                    player.PrintToCenter(centerhtml);
+                }
+            }
+        }
+    }
+
 
     public HookResult OnPlayerDisconnect(EventPlayerDisconnect @event, GameEventInfo info)
     {
         if (@event == null) return HookResult.Continue;
         var player = @event.Userid;
-        if (player == null || !player.IsValid) return HookResult.Continue;
+        
+        if (player == null || !player.IsValid || player.IsBot || player.IsHLTV) return HookResult.Continue;
+        var playerid = player.SteamID;
+        Helper.PersonData personData = Helper.RetrievePersonDataById(playerid);
+        DateTime personDate = DateTime.Now;
 
-        _playerMenuStates.Remove(player.Slot);
-        _previewCooldowns.Remove(player.Slot);
-        Globals.Choosed_MVP.Remove(player.SteamID);
-        Globals.client_mute.Remove(player.SteamID);
-        Globals.allow_groups.Remove(player.SteamID);
-        Globals.client_cantoggle.Remove(player.SteamID);
+        Globals.allow_groups.Remove(playerid);
+        Globals.Choosed_MVP.Remove(playerid);
+        Globals.client_mute.Remove(playerid);
+        Globals.client_cantoggle.Remove(playerid);
 
-        return HookResult.Continue;
-    }
-
-    private void OnMapEnd()
-    {
-        _playerMenuStates.Clear();
-        _previewCooldowns.Clear();
-        Globals.playedPaths.Clear();
-        Globals.Choosed_MVP.Clear();
-        Globals.client_mute.Clear();
-        Globals.allow_groups.Clear();
-        Globals.client_cantoggle.Clear();
-    }
-
-    private HookResult OnEventRoundMvp(EventRoundMvp @event, GameEventInfo info)
-    {
-        if (@event == null) return HookResult.Continue;
-        var player = @event.Userid;
-        if (player == null || !player.IsValid || player.IsBot) return HookResult.Continue;
-
-        Server.NextFrame(() =>
+        if(Configs.GetConfigData().MVP_UseMySql)
         {
-            try
+            Task.Run(async () =>
             {
-                var mvpData = LoadMvpSettings();
-                if (mvpData == null || mvpData.Count == 0) return;
-
-                string? chosenKitKey = null;
-                if (Globals.Choosed_MVP.TryGetValue(player.SteamID, out var key) && mvpData.ContainsKey(key))
+                try
                 {
-                    chosenKitKey = key;
-                }
-                else
-                {
-                    var personData = Helper.RetrievePersonDataById(player.SteamID);
-                    if (!string.IsNullOrEmpty(personData.MusicKit) && mvpData.ContainsKey(personData.MusicKit))
+                    var connectionSettings = JsonConvert.DeserializeObject<MySqlDataManager.MySqlConnectionSettings>(await File.ReadAllTextAsync(Path.Combine(Path.Combine(ModuleDirectory, "config"), "MySql_Settings.json")));
+                    var connectionString = new MySqlConnectionStringBuilder
                     {
-                        chosenKitKey = personData.MusicKit;
+                        Server = connectionSettings!.MySqlHost,
+                        Port = (uint)connectionSettings.MySqlPort,
+                        Database = connectionSettings.MySqlDatabase,
+                        UserID = connectionSettings.MySqlUsername,
+                        Password = connectionSettings.MySqlPassword
+                    }.ConnectionString;
+                    
+                    using (var connection = new MySqlConnection(connectionString))
+                    {
+                        await connection.OpenAsync();
+                        await MySqlDataManager.CreatePersonDataTableIfNotExistsAsync(connection);
+
+                        DateTime personDate = DateTime.Now;
+                        var personData = Helper.RetrievePersonDataById(playerid);
+                        if (personData.PlayerSteamID != 0)
+                        {
+                            await MySqlDataManager.SaveToMySqlAsync(playerid, personData.MusicKit!, personData.Client_Mute_MVP, personDate, connection, connectionSettings);
+                        }
                     }
                 }
-
-                // If player has no kit chosen, check default
-                if (string.IsNullOrEmpty(chosenKitKey) && mvpData.Count > 0)
+                catch (Exception ex)
                 {
-                    // Check default steam kit or take first available
-                    if (Configs.GetConfigData().MVP_DefaultMusicKitPerSteam.TryGetValue(player.SteamID.ToString(), out var defKit) && mvpData.ContainsKey(defKit))
-                    {
-                        chosenKitKey = defKit;
-                    }
+                    Console.WriteLine($"======================== ERROR =============================");
+                    Console.WriteLine($"An error occurred: {ex.Message}");
+                    Console.WriteLine($"======================== ERROR =============================");
                 }
-
-                if (string.IsNullOrEmpty(chosenKitKey) || !mvpData.ContainsKey(chosenKitKey))
-                    return;
-
-                var chosenKit = mvpData[chosenKitKey];
-                string kitName = chosenKit.ContainsKey("MVP_Kit_Name") ? chosenKit["MVP_Kit_Name"]?.ToString() ?? chosenKitKey : chosenKitKey;
-                string soundPath = ExtractSoundPath(chosenKit);
-                string soundEvent = ExtractSoundEvent(chosenKit, soundPath);
-
-                if (string.IsNullOrEmpty(soundPath) && string.IsNullOrEmpty(soundEvent)) return;
-
-                // Broadcast chat
-                string chatMsg = $" {{gold}}[MVP] {{grey}}| {{gold}}{player.PlayerName} {{grey}}is the MVP! Playing: {{gold}}{kitName}";
-
-                // Play sound and display for all non-muted players
-                foreach (var target in Helper.GetAllController())
-                {
-                    if (target == null || !target.IsValid || target.IsBot || target.IsHLTV)
-                        continue;
-
-                    Helper.AdvancedPrintToChat(target, chatMsg);
-
-                    if (!Globals.client_mute.ContainsKey(target.SteamID))
-                    {
-                        PlaySoundToPlayer(target, soundEvent, soundPath);
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[MVP] Error in EventRoundMvp: {ex.Message}");
-            }
-        });
+            });
+        }
 
         return HookResult.Continue;
+    }
+    public void OnMapEnd()
+    {
+        Helper.ClearVariables();
+    }
+    public override void Unload(bool hotReload)
+    {
+        Helper.ClearVariables();
     }
 }
