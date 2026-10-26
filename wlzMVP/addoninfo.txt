@@ -1,0 +1,8 @@
+"AddonInfo"
+{
+    "addonTitle"         "wlzMVP"
+    "addonVersion"       "1.0"
+    "addonAuthor"        "Walliez"
+    "addonDescription"   "wlzMVP - Custom Server MVP Music Pack"
+    "addonSteamAppID"    "730"
+}

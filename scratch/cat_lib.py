@@ -1,0 +1,10 @@
+import paramiko
+
+ssh = paramiko.SSHClient()
+ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+ssh.connect("81.181.113.120", port=22, username="root", password=")(e092e8EjTUiV")
+
+stdin, stdout, stderr = ssh.exec_command("cat /home/csgoserver/Steam/steamapps/libraryfolders.vdf")
+print("libraryfolders.vdf:\n", stdout.read().decode())
+
+ssh.close()

@@ -1,0 +1,365 @@
+{
+  "Prefix": "{green}[wlzmenu]{default} ",
+  "Menus": {
+    "wlzmenu": {
+      "Title": "SERVER MENU",
+      "Type": "WasdMenu",
+      "Command": [
+        "css_wlzmenu",
+        "css_menu",
+        "css_custommenu",
+        "css_adminmenu",
+        "css_owner",
+        "css_wasd"
+      ],
+      "Permission": [
+        "@css/root",
+        "#wlz/owner",
+        "#wlz/admin",
+        "#css/admin"
+      ],
+      "ExitButton": true,
+      "DisplayTime": 0,
+      "Options": {
+        "Admin Panel": {
+          "Command": [
+            "client:css_admin"
+          ],
+          "CloseMenu": true,
+          "Message": true
+        },
+        "MVP Anthems": {
+          "Command": [
+            "client:css_mvp"
+          ],
+          "CloseMenu": true,
+          "Message": true
+        },
+        "Skins & Cosmetics": {
+          "Command": [
+            "css_wp_menu"
+          ],
+          "CloseMenu": true,
+          "Message": true
+        },
+        "Give Weapons": {
+          "Command": [
+            "css_weapons"
+          ],
+          "CloseMenu": true,
+          "Message": true
+        },
+        "Change Map": {
+          "Command": [
+            "css_maps"
+          ],
+          "CloseMenu": true,
+          "Message": true
+        },
+        "Practice & Cheats": {
+          "Command": [
+            "css_practice"
+          ],
+          "CloseMenu": true,
+          "Message": true
+        },
+        "Bot Controls": {
+          "Command": [
+            "css_bots"
+          ],
+          "CloseMenu": true,
+          "Message": true
+        },
+        "Restart Match": {
+          "Command": [
+            "mp_restartgame 1"
+          ],
+          "Confirm": true,
+          "CloseMenu": true,
+          "Message": true
+        }
+      }
+    },
+    "Skins & Cosmetics": {
+      "Title": "SKINS & COSMETICS",
+      "Type": "WasdMenu",
+      "Command": [
+        "css_wp_menu"
+      ],
+      "Permission": [
+        "@css/root",
+        "#css/admin"
+      ],
+      "ExitButton": true,
+      "DisplayTime": 0,
+      "Options": {
+        "Skins": {
+          "Command": [
+            "client:css_skins"
+          ],
+          "CloseMenu": true,
+          "Message": true
+        },
+        "Knives": {
+          "Command": [
+            "client:css_knife"
+          ],
+          "CloseMenu": true,
+          "Message": true
+        },
+        "Gloves": {
+          "Command": [
+            "client:css_gloves"
+          ],
+          "CloseMenu": true,
+          "Message": true
+        },
+        "Agents": {
+          "Command": [
+            "client:css_agents"
+          ],
+          "CloseMenu": true,
+          "Message": true
+        },
+        "Music Kits": {
+          "Command": [
+            "client:css_music"
+          ],
+          "CloseMenu": true,
+          "Message": true
+        },
+        "Pins & Coins": {
+          "Command": [
+            "client:css_pin"
+          ],
+          "CloseMenu": true,
+          "Message": true
+        },
+        "Toggle StatTrak": {
+          "Command": [
+            "client:css_st"
+          ],
+          "CloseMenu": false,
+          "Message": true
+        },
+        "Refresh Skins": {
+          "Command": [
+            "client:css_wp"
+          ],
+          "CloseMenu": false,
+          "Message": true
+        }
+      }
+    },
+    "Change Map": {
+      "Title": "CHANGE MAP",
+      "Type": "WasdMenu",
+      "Command": [
+        "css_maps"
+      ],
+      "Permission": [
+        "@css/root",
+        "#css/admin"
+      ],
+      "ExitButton": true,
+      "DisplayTime": 0,
+      "Options": {
+        "de_mirage": {
+          "Command": [
+            "map de_mirage"
+          ],
+          "Confirm": true,
+          "CloseMenu": true,
+          "Message": true
+        },
+        "de_dust2": {
+          "Command": [
+            "map de_dust2"
+          ],
+          "Confirm": true,
+          "CloseMenu": true,
+          "Message": true
+        },
+        "de_inferno": {
+          "Command": [
+            "map de_inferno"
+          ],
+          "Confirm": true,
+          "CloseMenu": true,
+          "Message": true
+        },
+        "de_nuke": {
+          "Command": [
+            "map de_nuke"
+          ],
+          "Confirm": true,
+          "CloseMenu": true,
+          "Message": true
+        },
+        "de_anubis": {
+          "Command": [
+            "map de_anubis"
+          ],
+          "Confirm": true,
+          "CloseMenu": true,
+          "Message": true
+        }
+      }
+    },
+    "Give Weapons": {
+      "Title": "GIVE WEAPONS",
+      "Type": "WasdMenu",
+      "Command": [
+        "css_weapons"
+      ],
+      "Permission": [
+        "@css/root",
+        "#css/admin"
+      ],
+      "ExitButton": true,
+      "DisplayTime": 0,
+      "Options": {
+        "AK-47": {
+          "Command": [
+            "give weapon_ak47"
+          ],
+          "CloseMenu": false,
+          "Message": true
+        },
+        "M4A1-S": {
+          "Command": [
+            "give weapon_m4a1_silencer"
+          ],
+          "CloseMenu": false,
+          "Message": true
+        },
+        "AWP": {
+          "Command": [
+            "give weapon_awp"
+          ],
+          "CloseMenu": false,
+          "Message": true
+        },
+        "Desert Eagle": {
+          "Command": [
+            "give weapon_deagle"
+          ],
+          "CloseMenu": false,
+          "Message": true
+        },
+        "Armor & Defuser": {
+          "Command": [
+            "give item_assaultsuit",
+            "give item_defuser"
+          ],
+          "CloseMenu": false,
+          "Message": true
+        },
+        "Grenades Pack": {
+          "Command": [
+            "give weapon_hegrenade",
+            "give weapon_flashbang",
+            "give weapon_smokegrenade",
+            "give weapon_molotov"
+          ],
+          "CloseMenu": false,
+          "Message": true
+        }
+      }
+    },
+    "Practice & Cheats": {
+      "Title": "PRACTICE & CHEATS",
+      "Type": "WasdMenu",
+      "Command": [
+        "css_practice"
+      ],
+      "Permission": [
+        "@css/root",
+        "#css/admin"
+      ],
+      "ExitButton": true,
+      "DisplayTime": 0,
+      "Options": {
+        "Enable Cheats": {
+          "Command": [
+            "sv_cheats 1"
+          ],
+          "CloseMenu": false,
+          "Message": true
+        },
+        "Infinite Ammo": {
+          "Command": [
+            "sv_infinite_ammo 1"
+          ],
+          "CloseMenu": false,
+          "Message": true
+        },
+        "Start Warmup": {
+          "Command": [
+            "mp_warmuptime 999999",
+            "mp_warmup_start"
+          ],
+          "CloseMenu": false,
+          "Message": true
+        },
+        "End Warmup": {
+          "Command": [
+            "mp_warmup_end"
+          ],
+          "CloseMenu": false,
+          "Message": true
+        }
+      }
+    },
+    "Bot Controls": {
+      "Title": "BOT CONTROLS",
+      "Type": "WasdMenu",
+      "Command": [
+        "css_bots"
+      ],
+      "Permission": [
+        "@css/root",
+        "#css/admin"
+      ],
+      "ExitButton": true,
+      "DisplayTime": 0,
+      "Options": {
+        "Kick All Bots": {
+          "Command": [
+            "bot_kick"
+          ],
+          "CloseMenu": false,
+          "Message": true
+        },
+        "Add CT Bot": {
+          "Command": [
+            "bot_add_ct"
+          ],
+          "CloseMenu": false,
+          "Message": true
+        },
+        "Add T Bot": {
+          "Command": [
+            "bot_add_t"
+          ],
+          "CloseMenu": false,
+          "Message": true
+        },
+        "Freeze Bots": {
+          "Command": [
+            "bot_stop 1"
+          ],
+          "CloseMenu": false,
+          "Message": true
+        },
+        "Unfreeze Bots": {
+          "Command": [
+            "bot_stop 0"
+          ],
+          "CloseMenu": false,
+          "Message": true
+        }
+      }
+    }
+  }
+}
