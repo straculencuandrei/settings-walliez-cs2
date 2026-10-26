@@ -75,6 +75,7 @@ public class MVPSoundsGoldKingZ : BasePlugin
     private CounterStrikeSharp.API.Modules.Timers.Timer? HUDTimer_Center_Bottom;
 
     private readonly Dictionary<int, CMenuState> _playerMenuStates = new();
+    private readonly Dictionary<int, DateTime> _previewCooldowns = new();
 
     public override void Load(bool hotReload)
     {
@@ -387,26 +388,29 @@ public class MVPSoundsGoldKingZ : BasePlugin
         if (canPreview)
         {
             string soundPath = ExtractSoundPath(kitDict);
-            if (!string.IsNullOrEmpty(soundPath))
+            string soundEvent = ExtractSoundEvent(kitDict, soundPath);
+            if (!string.IsNullOrEmpty(soundPath) || !string.IsNullOrEmpty(soundEvent))
             {
                 subMenu.AddOption("Preview Track (10s)", p =>
                 {
-                    Server.NextFrame(() =>
+                    try
                     {
-                        try
+                        if (p == null || !p.IsValid || p.IsBot) return;
+
+                        if (_previewCooldowns.TryGetValue(p.Slot, out var cd) && DateTime.UtcNow < cd)
                         {
-                            if (p == null || !p.IsValid || p.IsBot) return;
-                            Helper.AdvancedPrintToChat(p, "{gold}[MVP] {grey}| {white}Previewing: {gold}{0}{white}...", kitName);
-                            string cleanSound = soundPath;
-                            if (cleanSound.EndsWith(".vsnd_c", StringComparison.OrdinalIgnoreCase))
-                                cleanSound = cleanSound[..^2];
-                            p.ExecuteClientCommand($"play {cleanSound}");
+                            Helper.AdvancedPrintToChat(p, "{gold}[MVP] {grey}| {white}Please wait before previewing again.");
+                            return;
                         }
-                        catch (Exception ex)
-                        {
-                            Console.WriteLine($"[MVP Preview Error] {ex.Message}");
-                        }
-                    });
+                        _previewCooldowns[p.Slot] = DateTime.UtcNow.AddSeconds(2);
+
+                        Helper.AdvancedPrintToChat(p, "{gold}[MVP] {grey}| {white}Previewing: {gold}{0}{white}...", kitName);
+                        PlaySoundToPlayer(p, soundEvent, soundPath);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[MVP Preview Error] {ex.Message}");
+                    }
                 });
             }
         }
@@ -445,6 +449,58 @@ public class MVPSoundsGoldKingZ : BasePlugin
         if (kitDict.ContainsKey("Sound_Path") && kitDict["Sound_Path"] != null)
             return kitDict["Sound_Path"].ToString() ?? string.Empty;
         return string.Empty;
+    }
+
+    private static string ExtractSoundEvent(Dictionary<string, object> kitDict, string soundPath)
+    {
+        if (kitDict.ContainsKey("Sound_Event") && kitDict["Sound_Event"] != null)
+        {
+            string ev = kitDict["Sound_Event"].ToString() ?? string.Empty;
+            if (!string.IsNullOrEmpty(ev)) return ev;
+        }
+
+        if (!string.IsNullOrEmpty(soundPath))
+        {
+            string fileName = Path.GetFileName(soundPath);
+            if (fileName.EndsWith(".vsnd_c", StringComparison.OrdinalIgnoreCase))
+                fileName = fileName[..^7];
+            else if (fileName.EndsWith(".vsnd", StringComparison.OrdinalIgnoreCase))
+                fileName = fileName[..^5];
+            return $"CustomMVP.{fileName}";
+        }
+
+        return string.Empty;
+    }
+
+    private static void PlaySoundToPlayer(CCSPlayerController player, string soundEvent, string soundPath)
+    {
+        try
+        {
+            if (player == null || !player.IsValid || player.IsBot) return;
+
+            var recipients = new RecipientFilter { player };
+
+            // 1. Native Source 2 networked sound event emission (completely safe on headless dedicated server)
+            if (!string.IsNullOrEmpty(soundEvent))
+            {
+                player.EmitSound(soundEvent, recipients);
+                return;
+            }
+
+            // 2. Fallback to clean vsnd path if sound event name is somehow not found
+            if (!string.IsNullOrEmpty(soundPath))
+            {
+                string cleanSound = soundPath;
+                if (cleanSound.EndsWith(".vsnd_c", StringComparison.OrdinalIgnoreCase))
+                    cleanSound = cleanSound[..^2];
+
+                player.EmitSound(cleanSound, recipients);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[MVP Sound Error] Failed to play sound: {ex.Message}");
+        }
     }
 
     private void EquipAnthem(CCSPlayerController player, string kitKey, string kitName)
@@ -769,6 +825,7 @@ public class MVPSoundsGoldKingZ : BasePlugin
         if (player == null || !player.IsValid) return HookResult.Continue;
 
         _playerMenuStates.Remove(player.Slot);
+        _previewCooldowns.Remove(player.Slot);
         Globals.Choosed_MVP.Remove(player.SteamID);
         Globals.client_mute.Remove(player.SteamID);
         Globals.allow_groups.Remove(player.SteamID);
@@ -780,6 +837,7 @@ public class MVPSoundsGoldKingZ : BasePlugin
     private void OnMapEnd()
     {
         _playerMenuStates.Clear();
+        _previewCooldowns.Clear();
         Globals.playedPaths.Clear();
         Globals.Choosed_MVP.Clear();
         Globals.client_mute.Clear();
@@ -830,8 +888,9 @@ public class MVPSoundsGoldKingZ : BasePlugin
                 var chosenKit = mvpData[chosenKitKey];
                 string kitName = chosenKit.ContainsKey("MVP_Kit_Name") ? chosenKit["MVP_Kit_Name"]?.ToString() ?? chosenKitKey : chosenKitKey;
                 string soundPath = ExtractSoundPath(chosenKit);
+                string soundEvent = ExtractSoundEvent(chosenKit, soundPath);
 
-                if (string.IsNullOrEmpty(soundPath)) return;
+                if (string.IsNullOrEmpty(soundPath) && string.IsNullOrEmpty(soundEvent)) return;
 
                 // Broadcast chat
                 string chatMsg = $" {{gold}}[MVP] {{grey}}| {{gold}}{player.PlayerName} {{grey}}is the MVP! Playing: {{gold}}{kitName}";
@@ -846,10 +905,7 @@ public class MVPSoundsGoldKingZ : BasePlugin
 
                     if (!Globals.client_mute.ContainsKey(target.SteamID))
                     {
-                        string cleanSound = soundPath;
-                        if (cleanSound.EndsWith(".vsnd_c", StringComparison.OrdinalIgnoreCase))
-                            cleanSound = cleanSound[..^2];
-                        target.ExecuteClientCommand($"play {cleanSound}");
+                        PlaySoundToPlayer(target, soundEvent, soundPath);
                     }
                 }
             }

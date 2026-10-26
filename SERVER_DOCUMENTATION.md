@@ -211,88 +211,125 @@ systemctl restart cs2
 
 ---
 
-### 6. `MVPAnthem` Audio Architecture & Dedicated Server Crash Diagnostics
-Source: `/home/csgoserver/cs2-mvpanthem`
-Binary: `/home/csgoserver/server-cs2/game/csgo/addons/counterstrikesharp/plugins/MVPAnthem/MVPAnthem.dll`
+### 6. `Custom_MVP_Sounds` Architecture & Dedicated Server Crash Diagnostics
+Source: `/home/csgoserver/cs2-custom-mvp`
+Binary: `/home/csgoserver/server-cs2/game/csgo/addons/counterstrikesharp/plugins/Custom_MVP_Sounds/Custom_MVP_Sounds.dll`
+Active Workshop Addon: `3827657422` (Item Name: `wlzMVP`) mounted via `multiaddonmanager.cfg`
 
-#### A. Dedicated Server Audio Architecture & Client Command Dispatch
-- **Root Cause of Server Crash**:
-  1. A Linux CS2 dedicated server runs headless (`-dedicated`) without audio output hardware; its internal sound output device pointer (`0x801540` in `libsoundsystem.so`) is `NULL`.
-  2. Executing `player.ExecuteClientCommandFromServer("play ...")` or `Server.ExecuteCommand("play ...")` executes the `play` command **locally on the dedicated server**, not the client.
-  3. When the dedicated server attempts to process local audio playback in `libsoundsystem.so`, instruction `cmp 0x88(%rbx), %rax` dereferences offset `0x88` on the `NULL` device pointer, immediately terminating the server with a segmentation fault (`status 11/SEGV`).
-  4. Additionally, mutating networked entity properties (`mvpPlayer.MVPs = 0`, `mvpPlayer.MusicKitMVPs = 0`, `@event.Nomusic = 1`) inside `EventRoundMvp` (HookMode.Pre) corrupts the engine's internal music-kit resolver, which also causes null-pointer crashes.
-- **Audio Playback Rules & Solutions**:
-  1. **Execute on Client, NEVER on Server**: Always use `player.ExecuteClientCommand($"play {sound}")`. This transmits the command over the network to execute on the player's game console, where audio hardware exists. It never executes on the headless server.
-  2. **44.1 kHz MP3 Standard with Original Quality**: Any incoming audio file is converted to MP3 at **44.1 kHz** (`-codec:a libmp3lame -q:a 0 -ar 44100`), preserving the full original bitrate, channels, and dynamics without artificial downsampling.
-  3. **FastDL Delivery**: CS2 clients require HTTP FastDL to download custom sounds. Nginx on port 80 now mirrors `/var/www/fastdl/` -> `/home/csgoserver/server-cs2/game/csgo/`, and `server.cfg` has `sv_downloadurl "http://81.181.113.120/fastdl/"` and `sv_allowdownload 1`. Connecting clients automatically download the tracks over HTTP upon connecting.
-  4. **Native Sound Events**: For native CS2 audio (e.g. `Music.Valve_MVP`, `Weapon_AWP.Single`), dispatch via `player.EmitSound(soundEvent, recipients)`.
-  5. **NEVER mutate entity MVP or music properties in round event hooks**: Leave `@event.Nomusic`, `mvpPlayer.MVPs`, and `mvpPlayer.MusicKitMVPs` intact.
-  6. **Always defer round MVP actions to `Server.NextFrame`**: Wrapping audio playback, chat broadcast, and center HTML banner generation inside `Server.NextFrame(() => { try { ... } catch (Exception ex) { ... } })` guarantees the Source 2 engine finishes its internal round-end event chain before plugin actions occur.
+#### A. Dedicated Server Audio Architecture & The "play" Command Deadlock Crash
+- **Bug Symptoms**:
+  - Whenever a player pressed "Preview Track (10s)" in the `/mvp` menu or when an MVP won a round, the server would immediately freeze tick processing.
+  - No chat or commands could be sent; client packet queues filled up (`recv queue overflow 100 messages already queued`).
+  - Exactly 30 seconds after the freeze, the server process crashed with:
+    ```text
+    WatchDog! Server took too long to process (probably infinite loop)
+    FATAL ERROR: Watchdog timeout exceeded, exiting
+    ```
+    or in systemd logs: `Main process exited, code=dumped, status=6/ABRT` / `status=11/SEGV` in `libtier0.so`.
+- **Root Cause Analysis**:
+  1. A Linux dedicated server runs headless (`-dedicated`) with no audio hardware or sound driver loaded. Its internal sound system interface (`libsoundsystem.so`) does not initialize hardware audio stream playback buffers.
+  2. Developers often assume that `player.ExecuteClientCommand($"play {sound}")` runs *only* on the client's local game console.
+  3. **The Engine Reality**: In CounterStrikeSharp, `ExecuteClientCommand` dispatches to `IVEngineServer2::ClientCommand(clientIndex, command)`. The dedicated server's internal engine command parser receives `"play ..."` and dispatches it into `libsoundsystem.so`'s sound mixer worker thread.
+  4. Because the server is headless, the sound mixer blocks on an uninitialized audio hardware mutex. This deadlocks the server's main tick loop.
+  5. The tick loop stops advancing entirely. After 30 seconds of no tick updates, Valve's watchdog thread (`EngineWatchdogThread`) triggers a fatal assertion crash to abort what it assumes is an infinite loop.
+  6. Conversely, executing `ExecuteClientCommandFromServer("play ...")` routes through server ConVar lookups and dereferences a null sound output device pointer (`0x801540` in `libsoundsystem.so`), crashing instantly with a segmentation fault (`status 11/SEGV` at offset `+0x88`).
+- **The Native Source 2 Solution (`EmitSound` with `RecipientFilter`)**:
+  - **NEVER** use `ExecuteClientCommand("play ...")` or `ExecuteClientCommandFromServer("play ...")` for sound playback on a dedicated server.
+  - Use Source 2's native networked sound emission API:
+    ```csharp
+    var recipients = new RecipientFilter { player };
+    player.EmitSound(soundEvent, recipients);
+    ```
+  - **Why this never crashes**: `player.EmitSound` serializes a `CSVCMsg_Sounds` Protobuf network message and transmits it directly over the UDP socket to the client. The dedicated server process never touches audio mixing buffers, never accesses hardware drivers, and never blocks the tick loop.
+  - For round MVP broadcasts (to all non-muted players):
+    ```csharp
+    foreach (var target in Helper.GetAllController())
+    {
+        if (target == null || !target.IsValid || target.IsBot || target.IsHLTV) continue;
+        if (!Globals.client_mute.ContainsKey(target.SteamID))
+        {
+            var recipients = new RecipientFilter { target };
+            target.EmitSound(soundEvent, recipients);
+        }
+    }
+    ```
+  - In `Custom_MVP_Sounds`, `PlaySoundToPlayer(player, soundEvent, soundPath)` resolves the sound event key (`CustomMVP.{track_id}`) and broadcasts via `player.EmitSound` safely.
 
-#### B. First-Spawn Weapon Skins Resolution (`WeaponPaints`)
+#### B. WASD Menu HUD Persistence & The 200ms Fade-Out Rule
+- **Bug Symptoms**:
+  - The `/mvp` menu was continuously popping in and out, blinking on screen, or disappearing when navigating between options.
 - **Root Cause**:
-  1. When a player connects to the server, `EventPlayerConnectFull` triggers an asynchronous MySQL query (`GetPlayerData`).
-  2. The player frequently spawns into the game (`OnPlayerSpawn`) *before* the asynchronous database query returns.
-  3. Originally, when `GetPlayerData` completed, it only populated memory dictionaries and never pushed skin/knife updates to the player's active pawn.
-  4. As a result, the player was stuck with default weapons until they died and respawned next round.
+  - In CounterStrikeSharp / CS2, `player.PrintToCenterHtml` messages are ephemeral HUD elements rendered by Panorama.
+  - By default, Panorama begins fading out center HTML messages after ~200-250ms unless a new message refreshes the container.
+  - When the menu was throttled (e.g. updated only on 500ms intervals or on key-down events), the HUD element faded out between inputs, creating an annoying flickering / popping effect.
 - **Resolution**:
-  1. In `OnClientFullConnect`: As soon as `await WeaponSync.GetPlayerData(playerInfo2)` finishes, it schedules `Server.NextFrame(() => RefreshWeapons(p, force: true))` to immediately apply custom knife, weapon skins, gloves, agent, and music kit.
-  2. In `OnPlayerSpawn`: Calls `Server.NextFrame(() => RefreshWeapons(player, force: true))`, ensuring that whenever a player spawns, all their held weapons and knife are immediately transformed in-place without needing to die.
+  - In `OnTick()`, when a player has an active menu in `_playerMenuStates`, re-render `RenderMenu(player, state)` every tick while `!Globals.Show_Center`:
+    ```csharp
+    if (!Globals.Show_Center)
+    {
+        RenderMenu(player, state);
+        state.IsDirty = false;
+        state.LastRenderTimeUtc = now;
+    }
+    ```
+  - Continuous per-tick rendering keeps the Panorama center HTML container stably illuminated and 100% flicker-free.
+  - The menu automatically yields when round MVP banners (`Globals.Show_Center`) are displayed.
 
-#### C. Permissions Hierarchy & Menu Visibility
-- Custom permission checks in `HasAccess()` must always include a root administrator override:
-  `if (AdminManager.PlayerHasPermissions(player, "@css/root")) return true;`
-- Implement group inheritance: `#wlz/owner` automatically inherits `#wlz/admin` and `#wlz/mod` permissions, and `#wlz/admin` inherits `#wlz/mod`.
+#### C. Audio Trimming, Normalization & 10-Second Fade-Out Standard
+- **The Problem**:
+  - Songs would play indefinitely after round end, continuing into the freeze time and early combat of the next round.
+- **The Specification**:
+  - **Duration**: Exactly 10.0 seconds total duration.
+  - **Fade-Out**: Smooth 1.0-second volume fadeout starting at second 9.0 and ending at second 10.0 (`afade=t=out:st=9:d=1`).
+  - **Encoding**: Clean 44.1 kHz CBR MP3 (libmp3lame, 320 kbps, stereo), strictly stripped of ID3v2/APIC tags that can confuse Valve's `resourcecompiler.exe`.
+  - **Automation**: Implemented in `export_clean_mp3.py` and `wlz_mvp_studio.py`, replicating the exact output profile of onlineaudioconverter without requiring web browser interaction.
 
-#### C. Client Console Output Analysis (Round Transition Diagnostics)
-When a round concludes and resets, the CS2 game engine outputs several client-side diagnostics:
-- **`[Client] CL: Forcing ExecuteQueuedOperations due to entity slot re-use (176 basemodelentity)`**:
-  - *Status*: Completely normal engine operation.
-  - *Explanation*: At round end, ragdolls, dropped weapons, and bot pawns are recycled into entity pool slots for the next round. The client flushes its queued interpolation and rendering operations before slot re-allocation.
-- **`Annotation: Cleared 0 annotations` / `Annotation: Error loading file : Missing file ''`**:
-  - *Status*: Harmless engine cleanup.
-  - *Explanation*: Source 2 cleans up map annotation vectors (used for tutorials/bomb site markers) when a round terminates.
-- **`[SoundSystemLowLevel] Audio device starved 244 samples`**:
-  - *Status*: Transient client-side buffer underrun (~5.5ms at 44.1 kHz).
-  - *Explanation*: Occurs during the frame where the round concludes and the MVP banner / scoreboard renders, causing a microsecond client CPU spike. Inaudible and normal in CS2.
-- **`[CL CommandQueue] CQ: Server set re-sync at cmd 6561`**:
-  - *Status*: Standard sub-tick network synchronization.
-  - *Explanation*: The server sets a re-synchronization baseline for client sub-tick user commands at round freeze time.
-- **`[SteamNetSockets] Waited 2.8ms for SteamNetworkingSockets lock`**:
-  - *Status*: Minor thread lock contention.
-  - *Explanation*: Multiple game threads (render, net, physics) accessed Steam networking state concurrently during round state transition. A 2.8ms wait is negligible and within normal tolerances.
+#### D. Steam Workshop Pipeline & MultiAddonManager Mounting
+- **Addon Details**:
+  - Workshop Item ID: `3827657422` (Name: `wlzMVP`)
+  - Server Mount Configuration: `/home/csgoserver/server-cs2/game/csgo/cfg/multiaddonmanager.cfg`:
+    ```cfg
+    mm_extra_addons "3827657422"
+    ```
+- **Asset Compilation Architecture**:
+  - Source files reside in `C:\Program Files (x86)\Steam\steamapps\common\Counter-Strike Global Offensive\content\csgo_addons\wlzMVP\`.
+  - Soundevents KV3 file: `soundevents/soundevents_addon.vsndevts`.
+  - Valve's `resourcecompiler.exe` compiles assets into `game\csgo_addons\wlzMVP\soundevents\soundevents_addon.vsndevts_c` and `game\csgo_addons\wlzMVP\sounds\mvp\*.vsnd_c`.
+  - CS2 Workshop Tools packages and uploads the final VPK to Steam Workshop. Connecting clients automatically download and mount the VPK before map spawn.
 
 ---
 
-### 7. MVP Anthem Studio & Safe Deployment Tooling
+### 7. MVP Anthem Studio & Automation Tools
 
-To ensure you can add anthems at any time with zero risk of crashing the server, use the included tooling:
+To ensure anthems can be added quickly and reliably with zero risk of crashing the server, use the included tooling:
 
-#### Option A: Visual Web Studio (Recommended)
-Double-click `Launch_MVP_Studio.bat` (or execute `python add_mvp_ui.py`):
-1. **Interactive Audio Scrubber**: Drag and drop any audio file (`.mp3`, `.wav`, etc.). Scrub the waveform, listen with the live volume slider, and click **"Set Start Here"** to pick the exact drop.
-2. **Crash-Safe CS2 Sound Event Pairing**: Select from verified sound events (e.g. `Ubersoft.roundmvpanthem_01`, `Music.Valve_MVP`, `Survival.WinnerFanfare`).
-3. **Live Deployment Log Console**: The real-time log window displays every phase of deployment as it streams from the server:
-   - SSH & SFTP connection status
-   - Staging upload & server-side FFmpeg trimming
-   - Automated JSON configuration backup (`.bak`)
-   - Enforcement of `RemovePlayerInGameMvp: false`
-   - Linux ownership validation (`chown csgoserver:csgoserver`)
-   - Instant in-memory hot-reload confirmation
+#### Option A: All-in-One MVP Studio (`wlzMVP_Studio.bat` / `wlz_mvp_studio.py`)
+Double-click `wlzMVP_Studio.bat` (or drag and drop audio files onto it):
+1. **Interactive Metadata Prompt**: Prompts for Anthem Display Name and optional start time offset (e.g., `00:45` or `32`).
+2. **Automated Clean Audio Export**: Converts the source track to 44.1 kHz CBR MP3, trims to exactly 10.0 seconds, and applies a smooth 1-second volume fadeout (`9.0s -> 10.0s`).
+3. **KV3 Soundevents Registration**: Updates `soundevents/soundevents_addon.vsndevts` with the new track key (`CustomMVP.{track_id}`).
+4. **Valve Resource Compilation**: Invokes `resourcecompiler.exe` to compile the `.mp3` and `.vsndevts` into binary `.vsnd_c` and `.vsndevts_c` assets.
+5. **Dedicated Server Config Synchronization**: Updates `MVP_Settings.json` and syncs with the remote server via SFTP.
+6. **Workshop Tools Launcher**: Launches the CS2 Workshop Manager to submit the update directly to Workshop Item `3827657422`.
 
-#### Option B: High-Speed CLI Script
-Execute `add_mvp.py` with custom arguments:
-```powershell
-# Trim starting at 0:45 for 8 seconds:
-python add_mvp.py "C:\path\to\song.mp3" --name "Drop Beat" --start 00:45 --duration 8
+#### Option B: Clean 44.1 kHz Audio Exporter (`Convert_To_Clean_44k_MP3.bat` / `export_clean_mp3.py`)
+Drag and drop any audio file onto `Convert_To_Clean_44k_MP3.bat`:
+- Implements the exact onlineaudioconverter algorithm: 44.1 kHz CBR, 320 kbps, stereo, stripped ID3 tags.
+- Trims to 10.0 seconds with a 1-second smooth volume fadeout from 9.0s to 10.0s.
 
-# Add to specific category and permission:
-python add_mvp.py "C:\path\to\song.mp3" --name "VIP Banger" --category "VIP Anthems" --permission "@css/vip"
-```
-#### Option C: 1-Click Client Sync Tool (`Sync_MVP_Anthems.bat`)
-Double-click `Sync_MVP_Anthems.bat` on any player's Windows PC:
-- Auto-detects the local CS2 game installation across all Steam drives (C:, D:, E:).
-- Syncs all custom MP3 anthems from the FastDL HTTP endpoint (`http://81.181.113.120/fastdl/sounds/mvp/`) directly into `game/csgo/sounds/mvp/`.
-- Players can also type `/mvp` in-game and choose "FastDL Sound Pack Info" to view the download link and instructions.
+---
+
+### 8. Troubleshooting & Gotchas Cheat Sheet
+
+| Symptom | Root Cause | Fix / Prevention |
+|---|---|---|
+| **Server hangs for 30s then crashes on preview/round end** | `ExecuteClientCommand("play ...")` was used on dedicated server; engine sound streamer deadlocks on headless audio device | Use `player.EmitSound(soundEvent, new RecipientFilter { player })`. Never execute `play` via engine console commands. |
+| **Server crashes instantly (`status 11/SEGV`) on sound** | `ExecuteClientCommandFromServer("play ...")` was used; dereferences null sound device pointer (`+0x88`) | Use native `EmitSound`. |
+| **`/mvp` menu blinks / pops in and out continuously** | CS2 Panorama HUD fades center HTML messages in ~200ms; menu was throttled or event-driven | Call `RenderMenu(player, state)` every tick in `OnTick()` while active and `!Globals.Show_Center`. |
+| **Song plays forever past round end** | Audio was not trimmed to round-end duration | Audio tracks must be trimmed to 10.0s with 1.0s fadeout using `export_clean_mp3.py`. |
+| **Resource compiler fails with "extraneous tokens"** | Syntax error in `soundevents_addon.vsndevts` KV3 format (missing braces or unquoted keys) | Use `wlz_mvp_studio.py` which formats KV3 soundevents blocks validly. |
+| **Players can't hear custom workshop anthem** | Workshop addon not mounted or item ID mismatch | Ensure `mm_extra_addons "3827657422"` is in `multiaddonmanager.cfg` and soundevent name matches `CustomMVP.{track_id}`. |
+| **Player weapon switch locked after choosing skin** | `AddEntityIOEvent("Kill")` left dangling handles in `CCSPlayer_WeaponServices.m_hMyWeapons` | Never call `Kill` on player weapon entities; use `AcceptInput("ChangeSubclass")` and dynamic attribute updates. |
+
 
 

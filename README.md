@@ -13,7 +13,7 @@ This repository contains the complete configuration, custom CounterStrikeSharp p
 
 ### 2. Custom CounterStrikeSharp Plugins
 * **`server-configs/plugins/Custom_MVP_Sounds/`**:
-  * **`Custom_MVP_Sounds.cs`**: Modernized WASD-driven MVP Anthem selection menu (`/mvp`). Includes per-tick HUD rendering (no flickering/popping) and safe client-side playback.
+  * **`Custom_MVP_Sounds.cs`**: Modernized WASD-driven MVP Anthem selection menu (`/mvp`). Features per-tick center HUD rendering (no flickering/popping) and safe networked audio emission via native `EmitSound` (eliminates headless server audio deadlocks and watchdog timeout crashes).
   * **`MVP_Settings.json`**: Live server track definitions and configurations.
 * **`server-configs/plugins/CustomMenu/`**:
   * **`CustomMenu.cs`**: WASD-driven `/menu` plugin with emoji-free clean styling and confirmation sub-menus.
