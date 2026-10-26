@@ -352,22 +352,25 @@ Drag and drop any audio file onto `Convert_To_Clean_44k_MP3.bat`:
   - When the player triggered "Preview Track" (invoking `player.ExecuteClientCommand($"play {sound}")`) or round start triggered `stopsound`, `IVEngineServer2::ClientCommand` attempted to enqueue another reliable command packet into the saturated stream.
   - The engine's reliable network sender blocked waiting for socket buffer space and client acknowledgments. However, because the dedicated server's tick loop was blocked, `CNetworkGameServer::ProcessMessages` could not run to process the client's UDP acks.
   - This resulted in an unrecoverable deadlock of the main server thread. After 30 seconds with no completed ticks, Valve's watchdog thread (`EngineWatchdogThread`) triggered a fatal abort.
-- **The Permanent Fix**:
-  - In `OnTick()`, render menu updates ONLY when `state.IsDirty` or when `(now - state.LastRenderTimeUtc).TotalMilliseconds >= 180`. This provides 100% flicker-free HUD display while slashing network traffic by >88%, entirely preventing netchannel saturation.
-  - Sanitize all sound arguments in `PlaySoundToPlayer` (`.Trim().Replace("\"", "").Replace(";", "")`) and wrap client commands in error-handling blocks with player connection verification.
+#### C. Panorama UI Pop-In Mechanics & Sound Event Dispatching
+1. **Panorama HUD Pop-in Mechanics**:
+   - `player.PrintToCenterHtml` is implemented under the hood in CounterStrikeSharp by creating a Source 2 `EventShowSurvivalRespawnStatus(true)` event and firing it to the client.
+   - Valve designed the Panorama UI survival respawn status panel with an entrance slide-in/fade-in animation.
+   - If `PrintToCenterHtml` is invoked with throttled time gaps (such as every 180ms or 250ms), Panorama treats each incoming packet as an entirely new event, continuously re-triggering the entrance animation and causing the visible "popping in and out" blinking effect.
+   - Continuous per-tick updates while a menu is open allow Panorama's HTML DOM to update in-place smoothly with zero entrance animation re-triggers. When closed, `player.PrintToCenterHtml(" ")` cleanly unmounts the element.
 
-#### B. CS2 Chat Color Tags Architecture
-CounterStrikeSharp relies on `CounterStrikeSharp.API.Core.Translations.StringExtensions.ReplaceColorTags(this string text)` to convert human-readable color markup into native Source 2 chat color bytes:
-- `{gold}` -> `0x10`
-- `{grey}` -> `0x08`
-- `{white}` / `{default}` -> `0x01`
-- `{green}` -> `0x04`
-- `{darkred}` -> `0x02`
+2. **Native Source 2 Sound Events vs Client Command Injection**:
+   - Custom audio packed in workshop addons (VPKs) is registered in `soundevents/soundevents_addon.vsndevts_c` under event names (e.g. `CustomMVP.stiufeatwalli3zmastered`, `CustomMVP.gta_iii_full_theme_hq`).
+   - Forcing a client to execute `play sounds/mvp/...` via `player.ExecuteClientCommand` will fail or cause client audio crashes if the raw file is not extracted onto the client's local disk.
+   - Furthermore, `stopsound` is marked with `FCVAR_CHEAT` in CS2 and cannot be executed without `sv_cheats 1`.
+   - The correct and crash-proof method in Source 2 is invoking `player.EmitSound(soundEvent)` on the player controller entity. This natively plays the sound event through the Source 2 engine without client command execution, permissions errors, or netchannel stalls.
 
-If un-parsed color strings are passed into `player.PrintToChat()`:
-- The CS2 client chat parser detects `{` as an unknown command escape and strips it.
-- The remaining text renders verbatim in chat as: `gold}[MVP] {grey}| {white}...`.
-- Furthermore, messages beginning with a color byte must always be preceded by a leading space (`player.PrintToChat(" " + message)`), otherwise the client engine drops the initial byte.
+3. **Autonomous Server Crash Monitor (`cs2-crash-monitor.service`)**:
+   - Deployed as a background systemd service: `/etc/systemd/system/cs2-crash-monitor.service`.
+   - Python monitor: `/home/csgoserver/cs2_crash_monitor.py`.
+   - Monitored journalctl unit: `cs2.service`.
+   - On crash or segfault detection, it automatically extracts journalctl lines, CounterStrikeSharp logs, and writes reports to `/home/csgoserver/cs2_crash_reports/crash_YYYY-MM-DD_HH-MM-SS.log` and maintains `/home/csgoserver/LAST_CRASH.txt` for immediate incident inspection.
+
 
 
 
