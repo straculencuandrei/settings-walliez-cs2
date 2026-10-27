@@ -132,6 +132,14 @@
      - Active Webhook: `https://discord.com/api/webhooks/1564757451700699186/4gAqAW7JRKQrub6hoTnwNk70ea8qf-ELN7YPSAFdy6tGtE5rftUA7XGH3YXKGlCGP2OH`
      - Source repository: `/home/csgoserver/test-cannounce/`
 
+### 9. Chat & Link Censorship Completely Removed (`ChatManager`)
+- **Problem**: In-game messages containing website links, URLs, IP addresses, domains, or words with periods (e.g. `talent.walliez.xyz`, `skinz.walliez.xyz`, `gg.wp`) were being censored into asterisks (`****`). Player names with clan tags or links were also censored.
+- **Root Cause**: `ChatManager` had an aggressive built-in regex filter (`AdBlock.ChatMessages`, `AdBlock.PlayerNames`, and `FilterAds`) in `Events.cs` and `Helpers.cs` that matched `(?:\d{1,3}\.){3}\d{1,3}` and `(?:http(s)?://)?[\w.-]+\.[a-zA-Z]{2,}(?:/\S*)?` and replaced them with `****`.
+- **Fix Applied**:
+  1. **Config Update**: Set `"PlayerNames": false`, `"ChatMessages": false` under `"AdBlock"` and cleared `"BannedWords": []` in `addons/counterstrikesharp/configs/plugins/ChatManager/ChatManager.json`.
+  2. **Code Removal**: Patched `Events.cs` to eliminate the `FilterAds` / `ReplaceBannedWords` interception before chat dispatch. Patched `Helpers.cs` so `FilterAds` and `ReplaceBannedWords` pass through original text untouched.
+  3. **Build & Deploy**: Recompiled `ChatManager.dll` (.NET 8 Release) in `/home/csgoserver/test-chatmanager/`, deployed to `plugins/ChatManager/ChatManager.dll`, and hot-reloaded via RCON (`css_plugins reload 8`).
+
 ---
 
 ## Active Configuration Files
