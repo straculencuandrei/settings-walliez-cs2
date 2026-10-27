@@ -102,12 +102,17 @@
 - **Architecture & Design**:
   1. Built an ultra-lightweight, non-blocking asynchronous Python bot using `discord.py` and direct low-level UDP Valve A2S (`A2S_INFO` and `A2S_PLAYER`) protocol queries to `127.0.0.1:27015`.
   2. Runs as an isolated, standalone `systemd` service (`cs2-discord-bot.service`) independent of the CS2 game engine. This ensures the bot stays online 24/7 even during server reboots, map changes, or CS2 crashes (switching presence gracefully to `🔴 Server Offline` in DND mode).
-  3. Automatically tracks and updates the live embed in `#status` (`1564746794976546999`), updating player counts, map name, IP, and a one-click Steam connect link (`steam://connect/81.181.113.120:27015`).
+  3. Automatically tracks and updates the live embed in `#status` (`1564746794976546999`), updating player counts, map name, IP, and a one-click Steam connect link (`https://skinz.walliez.xyz/connect/` which auto-launches Steam via `steam://connect/81.181.113.120:27015`).
+  4. Features interactive Discord button components below the embed:
+     - `🎮 Connect via Steam`
+     - `🗡️ Skin & Knife Panel` (`https://skinz.walliez.xyz`)
+     - `🎵 MVP Anthems` (`https://mvpz.walliez.xyz`)
 - **Bot Configuration**:
   - Service Unit: `/etc/systemd/system/cs2-discord-bot.service` (auto-restarts on failure, runs under user `csgoserver`).
   - Directory: `/home/csgoserver/cs2-discord-bot/`
   - Config: `/home/csgoserver/cs2-discord-bot/config.json`
   - Virtualenv: `/home/csgoserver/cs2-discord-bot/venv`
+  - Web Connect Landing Page: `/var/www/skinz.walliez.xyz/connect/index.html`
 - **Management Commands**:
   - Check status: `systemctl status cs2-discord-bot`
   - Restart bot: `systemctl restart cs2-discord-bot`
