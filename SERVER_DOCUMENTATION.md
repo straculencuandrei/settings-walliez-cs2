@@ -123,13 +123,13 @@
 - **Architecture**:
   1. **Chat Logs**: Handled via `Chat-Logger-GoldKingZ` (already installed and loaded). Captures public and team chat, excludes in-game commands (`!`, `.`, `/`), attaches Steam avatar, and formats a rich Discord embed with the player's name and Steam profile link.
      - Config: `/home/csgoserver/server-cs2/game/csgo/addons/counterstrikesharp/plugins/Chat-Logger-GoldKingZ/config/config.json`
-     - Target field: `"Discord_WebHook": "<WEBHOOK_URL>"`
+     - Active Webhook: `https://discord.com/api/webhooks/1564757207411859456/mXQa3hve3KdVQcSk7lf2sPWieHjWO1vg-Skm7kCt8MItICOrdBqyNTfF092O4ibnYB4D`
   2. **Player Connect / Disconnect Logs**: Handled via enhanced `ConnectAnnounce` plugin (compiled on .NET 8).
      - Resolves player country and city via `GeoLite2-City.mmdb`.
      - Suppresses transient reconnects and map change hops so map voting/switches never spam the log channel.
      - Sends `🟢 Player Connected` and `🔴 Player Disconnected` embeds with player name, clickable Steam profile link, SteamID64, country/city, reason, and live player count (`X / 24`).
      - Config: `/home/csgoserver/server-cs2/game/csgo/addons/counterstrikesharp/configs/plugins/ConnectAnnounce/ConnectAnnounceConfig.json`
-     - Target field: `"DiscordWebhookUrl": "<WEBHOOK_URL>"`
+     - Active Webhook: `https://discord.com/api/webhooks/1564757451700699186/4gAqAW7JRKQrub6hoTnwNk70ea8qf-ELN7YPSAFdy6tGtE5rftUA7XGH3YXKGlCGP2OH`
      - Source repository: `/home/csgoserver/test-cannounce/`
 
 ---
