@@ -140,6 +140,23 @@
   2. **Code Removal**: Patched `Events.cs` to eliminate the `FilterAds` / `ReplaceBannedWords` interception before chat dispatch. Patched `Helpers.cs` so `FilterAds` and `ReplaceBannedWords` pass through original text untouched.
   3. **Build & Deploy**: Recompiled `ChatManager.dll` (.NET 8 Release) in `/home/csgoserver/test-chatmanager/`, deployed to `plugins/ChatManager/ChatManager.dll`, and hot-reloaded via RCON (`css_plugins reload 8`).
 
+### 10. Clean In-Game Scheduled Announcer (`ServerAnnouncer`)
+- **Objective**: Periodically broadcast clean, formatted announcements in CS2 chat highlighting the community sites (`skinz.walliez.xyz`, `mvpz.walliez.xyz`, and Discord) in a non-intrusive, randomized rotation.
+- **Architecture**:
+  - Developed and compiled a dedicated CounterStrikeSharp plugin `ServerAnnouncer` (.NET 8).
+  - Uses native Source 2 chat color tags (`{Gold}`, `{LightBlue}`, `{Green}`, `{LightPurple}`, `{LightYellow}`, `{Default}`).
+  - Non-repeating random selection algorithm so consecutive announcements are never identical.
+  - Automatically suspends and reschedules across map changes using `TimerFlags.REPEAT | TimerFlags.STOP_ON_MAPCHANGE`.
+- **Configuration**:
+  - File: `/home/csgoserver/server-cs2/game/csgo/addons/counterstrikesharp/configs/plugins/ServerAnnouncer/ServerAnnouncer.json`
+  - Plugin Path: `/home/csgoserver/server-cs2/game/csgo/addons/counterstrikesharp/plugins/ServerAnnouncer/ServerAnnouncer.dll`
+  - Source Code: `/home/csgoserver/cs2-announcer/`
+  - Defaults:
+    - `"IntervalSeconds": 90`
+    - `"RandomOrder": true`
+    - `"Prefix": "{Gold}★ {LightBlue}[Walliez]{Default}"`
+    - `"Messages"`: Promotes `skinz.walliez.xyz` (`!ws`/`!knife`), `mvpz.walliez.xyz` (`!mvp`), and `talent.walliez.xyz` Discord.
+
 ---
 
 ## Active Configuration Files
