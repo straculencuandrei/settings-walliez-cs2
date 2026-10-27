@@ -2,16 +2,16 @@
 {
     "CustomMVP.gta_iii_full_theme_hq" =
     {
-        type = "csgo_music"
+        type = "csgo_mega"
         volume = 1.000000
         pitch = 1.000000
-        vsnd_files = [ "sounds/mvp/gta_iii_full_theme_hq.vsnd" ]
+        vsnd_files_track_01 = "sounds/mvp/gta_iii_full_theme_hq.vsnd"
     }
-    "CustomMVP.stiufeatwalli3zmastered" =
+    "CustomMVP.stiufeatWALLI3Zmastered" =
     {
-        type = "csgo_music"
+        type = "csgo_mega"
         volume = 1.000000
         pitch = 1.000000
-        vsnd_files = [ "sounds/mvp/stiufeatwalli3zmastered.vsnd" ]
+        vsnd_files_track_01 = "sounds/mvp/stiufeatWALLI3Zmastered.vsnd"
     }
 }

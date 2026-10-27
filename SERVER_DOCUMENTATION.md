@@ -159,6 +159,26 @@
 
 ---
 
+
+### 7. WASD Menu Mutual Exclusion & Overlap Crash Prevention (`CustomMenu` & `AdminPlus`)
+- **Root Cause of Menu Flashing & Crashes**:
+  1. When a player had `/menu` open and then ran `/admin` (or clicked "Admin Panel"), both `CustomMenu` and `AdminPlus` maintained active menu state for that player simultaneously.
+  2. Both plugins ran their own `OnInternalMenuTick` listeners, calling `player.PrintToCenterHtml(...)` every single server tick (64/128 Hz). Panorama was violently overwritten back and forth at 64 FPS (causing rapid flashing/strobing).
+  3. Every tick, both plugins processed player button flags (`W`, `S`, `E`, `R`). Pressing Select (`E`) executed options from both menus simultaneously.
+  4. Saturated the client-server reliable user message channel, causing packet queue overflow and engine watchdog crashes.
+- **Fix**:
+  1. Implemented **pre-command mutual exclusion** using `AddCommandListener(..., HookMode.Pre)`:
+     - `CustomMenu` intercepts `css_admin`, `css_adminmenu`, `css_wlzadmin`, `admin`, `mvp`, etc., immediately closing `CustomMenu` before the other menu initializes.
+     - `AdminPlus` intercepts `css_menu`, `css_wlzmenu`, `css_custommenu`, `css_wasd`, `menu`, `mvp`, etc., immediately closing `AdminPlus` before the other menu initializes.
+  2. Added cross-plugin command signals (`css_close_custom_wasd_menu` & `css_close_admin_wasd_menu`).
+  3. Cleaned `CloseMenu` to immediately wipe Panorama DOM with both `PrintToCenterHtml(" ")` and `PrintToCenter(" ")`.
+  4. Zero menu overlap, zero packet flood, zero HUD strobing, and zero menu conflict crashes.
+
+### 8. Votekick and Voteban Removal & Staff Permissions Lockdown
+- Completely removed `votekick`, `voteban`, `css_votekick`, and `css_voteban` from `AdminPlus.Vote.cs` and `AdminPlus.PlayerSettings.cs`.
+- Disabled engine-level votekicking in `server.cfg` via `sv_vote_issue_kick_allowed 0` and `sv_vote_allow_spectators 0`.
+- Ensured all administrative commands (`mp_restartgame`, `bot_*`, `map`, `sv_cheats`, `give`, etc.) in `CustomMenu.json` and `AdminPlus` are strictly protected and restricted to staff groups (`#wlz/owner`, `#wlz/admin`, `@css/root`, `#css/admin`).
+
 ## Active Configuration Files
 
 ### `admins.json`
