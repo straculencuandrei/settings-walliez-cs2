@@ -17,6 +17,7 @@ import shutil
 import base64
 import urllib.request
 import subprocess
+import threading
 import webbrowser
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import paramiko
@@ -603,6 +604,137 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       color: #a1a1aa;
       white-space: pre-wrap;
     }
+
+    /* In-App Modal Dialogs */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.82);
+      backdrop-filter: blur(4px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      padding: 20px;
+    }
+    .modal-overlay.active {
+      display: flex;
+      animation: modalFade 0.15s ease-out;
+    }
+    @keyframes modalFade {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+    .modal-card {
+      background: #09090b;
+      border: 1px solid #27272a;
+      border-radius: 8px;
+      width: 100%;
+      max-width: 520px;
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.9);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      animation: modalZoom 0.15s ease-out;
+    }
+    @keyframes modalZoom {
+      from { transform: scale(0.97); opacity: 0; }
+      to { transform: scale(1); opacity: 1; }
+    }
+    .modal-header {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--card-border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: #0c0c0e;
+    }
+    .modal-title {
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: #ffffff;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .modal-close-btn {
+      background: transparent;
+      border: none;
+      color: #71717a;
+      font-size: 1.15rem;
+      cursor: pointer;
+      line-height: 1;
+      padding: 2px 6px;
+    }
+    .modal-close-btn:hover { color: #ffffff; }
+    .modal-body {
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    textarea {
+      width: 100%;
+      background: #030303;
+      border: 1px solid var(--card-border);
+      border-radius: 6px;
+      padding: 10px 12px;
+      color: #f4f4f5;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.82rem;
+      outline: none;
+      transition: border-color 0.15s;
+      resize: vertical;
+    }
+    textarea:focus { border-color: #3f3f46; }
+    .modal-footer {
+      padding: 10px 16px;
+      border-top: 1px solid var(--card-border);
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      background: #060608;
+    }
+
+    /* Toast Notifications */
+    .toast-container {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      z-index: 2000;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      pointer-events: none;
+    }
+    .toast {
+      background: #0c0c0e;
+      border: 1px solid #27272a;
+      border-radius: 6px;
+      padding: 10px 14px;
+      font-size: 0.78rem;
+      color: #ffffff;
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.8);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      pointer-events: auto;
+      animation: toastIn 0.2s ease-out;
+      min-width: 260px;
+      max-width: 420px;
+    }
+    @keyframes toastIn {
+      from { transform: translateY(10px); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+    .toast-tag {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.7rem;
+      font-weight: 700;
+      flex-shrink: 0;
+    }
+    .toast-success .toast-tag { color: #22c55e; }
+    .toast-error .toast-tag { color: #ef4444; }
+    .toast-info .toast-tag { color: #38bdf8; }
   </style>
 </head>
 <body>
@@ -870,6 +1002,85 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
   </div>
 
+  <!-- In-App Modal Dialogs -->
+  <!-- Announcement Edit/Add Modal -->
+  <div class="modal-overlay" id="announcementModal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div class="modal-title" id="announcementModalTitle">Edit Announcement Message</div>
+        <button class="modal-close-btn" onclick="closeAnnouncementModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <label>Announcement Text</label>
+        <textarea id="modalMsgInput" rows="3" placeholder="Enter message text... (use color tags below)" oninput="updateModalPreview()"></textarea>
+        <div>
+          <label style="font-size:0.68rem; margin-bottom:4px;">Quick Color Tags</label>
+          <div class="color-tags-container" style="margin-top:0;">
+            <span class="color-tag-pill" onclick="insertModalColor('{Gold}')" style="color: #E4AE39;">{Gold}</span>
+            <span class="color-tag-pill" onclick="insertModalColor('{LightBlue}')" style="color: #5E98D9;">{LightBlue}</span>
+            <span class="color-tag-pill" onclick="insertModalColor('{Green}')" style="color: #40FF40;">{Green}</span>
+            <span class="color-tag-pill" onclick="insertModalColor('{LightPurple}')" style="color: #D32CE6;">{LightPurple}</span>
+            <span class="color-tag-pill" onclick="insertModalColor('{LightYellow}')" style="color: #E5E24D;">{LightYellow}</span>
+            <span class="color-tag-pill" onclick="insertModalColor('{Red}')" style="color: #FF4040;">{Red}</span>
+            <span class="color-tag-pill" onclick="insertModalColor('{Default}')" style="color: #FFFFFF;">{Default}</span>
+            <span class="color-tag-pill" onclick="insertModalColor('{Grey}')" style="color: #CCCCCC;">{Grey}</span>
+          </div>
+        </div>
+        <div>
+          <label style="font-size:0.68rem; margin-bottom:4px;">In-Game Preview</label>
+          <div class="cs2-chat-sim" style="min-height:38px; margin-top:0; padding:8px 12px;">
+            <div class="cs2-preview-text" id="modalChatPreview" style="font-size:0.84rem;">Preview...</div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeAnnouncementModal()">Cancel</button>
+        <button class="btn" onclick="saveAnnouncementModal()">Save Message</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Confirmation Modal -->
+  <div class="modal-overlay" id="confirmModal">
+    <div class="modal-card" style="max-width: 440px;">
+      <div class="modal-header">
+        <div class="modal-title" id="confirmModalTitle">Confirm Action</div>
+        <button class="modal-close-btn" onclick="closeConfirmModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div id="confirmModalMsg" style="font-size: 0.82rem; color: #d4d4d8; line-height: 1.5;">Are you sure?</div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeConfirmModal()">Cancel</button>
+        <button class="btn btn-danger" id="confirmModalBtn" onclick="executeConfirmAction()">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Audio Converter Modal -->
+  <div class="modal-overlay" id="converterModal">
+    <div class="modal-card" style="max-width: 480px;">
+      <div class="modal-header">
+        <div class="modal-title">Convert Audio to Clean 44.1kHz MP3</div>
+        <button class="modal-close-btn" onclick="closeConverterModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <label>Audio File Path</label>
+        <input type="text" id="converterPathInput" placeholder="C:\\path\\to\\audio.mp3">
+        <div style="font-size:0.72rem; color:var(--text-muted); line-height:1.4;">
+          Converts using the exact onlineaudioconverter.com 320kbps 44.1kHz CBR algorithm with ID3 metadata stripped and 10.0s trim.
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeConverterModal()">Cancel</button>
+        <button class="btn" onclick="submitConvertFile()">Convert File</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification Container -->
+  <div class="toast-container" id="toastContainer"></div>
+
   <script>
     function log(text) {
       const term = document.getElementById('terminalLog');
@@ -891,6 +1102,157 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       if (tabId === 'tab-convars') loadConvars();
       if (tabId === 'tab-services') refreshServices();
     }
+
+    // In-App Toast System
+    function showToast(msg, type = 'success') {
+      const container = document.getElementById('toastContainer');
+      const toast = document.createElement('div');
+      toast.className = `toast toast-${type}`;
+      const tag = type === 'success' ? '[OK]' : (type === 'error' ? '[ERROR]' : '[INFO]');
+      toast.innerHTML = `<span class="toast-tag">${tag}</span><span>${msg}</span>`;
+      container.appendChild(toast);
+      setTimeout(() => {
+        toast.style.transition = 'opacity 0.2s, transform 0.2s';
+        toast.style.opacity = '0';
+        toast.style.transform = 'translateY(8px)';
+        setTimeout(() => toast.remove(), 250);
+      }, 3500);
+    }
+
+    // In-App Modal Dialog Management
+    let editingMessageIndex = -1;
+
+    function openAnnouncementModal(idx = -1) {
+      editingMessageIndex = idx;
+      const titleEl = document.getElementById('announcementModalTitle');
+      const inputEl = document.getElementById('modalMsgInput');
+      if (idx >= 0 && announcementsData.Messages[idx]) {
+        titleEl.innerText = `Edit Announcement Message #${idx + 1}`;
+        inputEl.value = announcementsData.Messages[idx];
+      } else {
+        titleEl.innerText = 'New Announcement Message';
+        inputEl.value = '';
+      }
+      updateModalPreview();
+      document.getElementById('announcementModal').classList.add('active');
+      inputEl.focus();
+    }
+
+    function closeAnnouncementModal() {
+      document.getElementById('announcementModal').classList.remove('active');
+    }
+
+    function insertModalColor(tag) {
+      const input = document.getElementById('modalMsgInput');
+      const start = input.selectionStart || input.value.length;
+      const end = input.selectionEnd || input.value.length;
+      const text = input.value;
+      input.value = text.substring(0, start) + tag + text.substring(end);
+      input.focus();
+      input.setSelectionRange(start + tag.length, start + tag.length);
+      updateModalPreview();
+    }
+
+    function updateModalPreview() {
+      const val = document.getElementById('modalMsgInput').value || 'Enter text to preview...';
+      const prefix = document.getElementById('announcerPrefix').value || '';
+      document.getElementById('modalChatPreview').innerHTML = parseCs2Colors((prefix ? prefix + ' ' : '') + val);
+    }
+
+    function saveAnnouncementModal() {
+      const val = document.getElementById('modalMsgInput').value.trim();
+      if (!val) {
+        showToast('Message text cannot be empty.', 'error');
+        return;
+      }
+      if (editingMessageIndex >= 0) {
+        announcementsData.Messages[editingMessageIndex] = val;
+        log(`Updated announcement #${editingMessageIndex + 1}`);
+      } else {
+        announcementsData.Messages.push(val);
+        log(`Added new announcement #${announcementsData.Messages.length}`);
+      }
+      renderAnnouncementsList();
+      closeAnnouncementModal();
+      showToast('Announcement updated. Click "Save & Deploy Live" to apply to server.', 'info');
+    }
+
+    // Confirmation Modal System
+    let pendingConfirmAction = null;
+
+    function openConfirmModal(title, msg, onConfirm, btnText = 'Confirm', isDanger = true) {
+      document.getElementById('confirmModalTitle').innerText = title;
+      document.getElementById('confirmModalMsg').innerText = msg;
+      const btn = document.getElementById('confirmModalBtn');
+      btn.innerText = btnText;
+      btn.className = isDanger ? 'btn btn-danger' : 'btn';
+      pendingConfirmAction = onConfirm;
+      document.getElementById('confirmModal').classList.add('active');
+    }
+
+    function closeConfirmModal() {
+      document.getElementById('confirmModal').classList.remove('active');
+      pendingConfirmAction = null;
+    }
+
+    function executeConfirmAction() {
+      if (pendingConfirmAction) {
+        pendingConfirmAction();
+      }
+      closeConfirmModal();
+    }
+
+    // Audio Converter Modal
+    function openConvertModal() {
+      document.getElementById('converterPathInput').value = '';
+      document.getElementById('converterModal').classList.add('active');
+      document.getElementById('converterPathInput').focus();
+    }
+
+    function closeConverterModal() {
+      document.getElementById('converterModal').classList.remove('active');
+    }
+
+    function submitConvertFile() {
+      const p = document.getElementById('converterPathInput').value.trim();
+      if (!p) {
+        showToast('Please enter an audio file path.', 'error');
+        return;
+      }
+      closeConverterModal();
+      log(`Converting audio file: ${p}...`);
+      fetch('/api/convert_mp3', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({path: p})
+      })
+      .then(r => r.json())
+      .then(d => {
+        if (d.success) {
+          log(d.output || 'Conversion complete.');
+          showToast('Audio conversion complete.', 'success');
+        } else {
+          log('[ERROR] ' + (d.error || 'Conversion failed.'));
+          showToast(d.error || 'Conversion failed.', 'error');
+        }
+      })
+      .catch(e => {
+        log('[ERROR] ' + e);
+        showToast(String(e), 'error');
+      });
+    }
+
+    // Keyboard shortcuts
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        closeAnnouncementModal();
+        closeConfirmModal();
+        closeConverterModal();
+      }
+      if (e.key === 'Enter' && e.ctrlKey && document.getElementById('announcementModal').classList.contains('active')) {
+        saveAnnouncementModal();
+      }
+    });
 
     // CS2 Color Parser
     const CS2_COLORS = {
@@ -956,7 +1318,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             <span>${msg}</span>
           </div>
           <div class="msg-actions">
-            <button class="btn btn-sm btn-secondary" onclick="editMessagePrompt(${idx})">Edit</button>
+            <button class="btn btn-sm btn-secondary" onclick="openAnnouncementModal(${idx})">Edit</button>
             <button class="btn btn-sm btn-danger" onclick="deleteMessage(${idx})">Delete</button>
           </div>
         `;
@@ -979,27 +1341,26 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     }
 
     function addNewMessagePrompt() {
-      const text = prompt("Enter new announcement message:\\n\\nUse tags like: {Gold}, {LightBlue}, {Green}, {LightPurple}, {Default}");
-      if (text && text.trim()) {
-        announcementsData.Messages.push(text.trim());
-        renderAnnouncementsList();
-      }
+      openAnnouncementModal(-1);
     }
 
     function editMessagePrompt(idx) {
-      const current = announcementsData.Messages[idx];
-      const updated = prompt("Edit announcement message:", current);
-      if (updated !== null && updated.trim()) {
-        announcementsData.Messages[idx] = updated.trim();
-        renderAnnouncementsList();
-      }
+      openAnnouncementModal(idx);
     }
 
     function deleteMessage(idx) {
-      if (confirm("Delete this announcement message?")) {
-        announcementsData.Messages.splice(idx, 1);
-        renderAnnouncementsList();
-      }
+      openConfirmModal(
+        'Delete Announcement',
+        `Are you sure you want to delete announcement message #${idx + 1}?`,
+        () => {
+          announcementsData.Messages.splice(idx, 1);
+          renderAnnouncementsList();
+          log(`Deleted announcement #${idx + 1}`);
+          showToast('Message deleted. Click "Save & Deploy Live" to apply.', 'info');
+        },
+        'Delete Message',
+        true
+      );
     }
 
     async function saveAnnouncementsToServer() {
@@ -1017,12 +1378,14 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         const out = await res.json();
         if (out.success) {
           log('[OK] Announcements saved and ServerAnnouncer hot-reloaded via RCON.');
-          alert('Announcements successfully deployed to the server.');
+          showToast('Announcements successfully deployed live to server.', 'success');
         } else {
           log('[ERROR] Error saving announcements: ' + out.error);
+          showToast('Error saving announcements: ' + out.error, 'error');
         }
       } catch (e) {
         log('[ERROR] Request failed: ' + e);
+        showToast('Request failed: ' + e, 'error');
       }
     }
 
@@ -1047,7 +1410,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
     async function saveHostname() {
       const name = document.getElementById('serverHostnameInput').value;
-      if (!name) return alert('Hostname cannot be empty');
+      if (!name) return showToast('Hostname cannot be empty.', 'error');
       log(`Applying hostname: "${name}"...`);
       try {
         const res = await fetch('/api/hostname', {
@@ -1058,12 +1421,14 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         const out = await res.json();
         if (out.success) {
           log('[OK] Hostname updated immediately in live server & server.cfg.');
-          alert('Hostname applied successfully.');
+          showToast('Hostname applied live to server & server.cfg.', 'success');
         } else {
           log('[ERROR] Error: ' + out.error);
+          showToast('Error: ' + out.error, 'error');
         }
       } catch (e) {
         log('[ERROR] Request failed: ' + e);
+        showToast('Request failed: ' + e, 'error');
       }
     }
 
@@ -1119,28 +1484,44 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         });
         const out = await res.json();
         log('[OK] Convars applied successfully via RCON.');
-        alert('Convar settings updated live on the server.');
+        showToast('Convar settings applied live on the server.', 'success');
       } catch (e) {
         log('[ERROR] Error applying convars: ' + e);
+        showToast('Error applying convars: ' + e, 'error');
       }
     }
 
     // Service Actions
-    async function serviceAction(action) {
-      if (!confirm(`Execute action: ${action}?`)) return;
-      log(`Triggering action: ${action}...`);
-      try {
-        const res = await fetch('/api/service/action', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({action: action})
-        });
-        const out = await res.json();
-        log(`Result: ${out.output || out.status}`);
-        refreshServices();
-      } catch (e) {
-        log('[ERROR] Action error: ' + e);
-      }
+    function serviceAction(action) {
+      const actionNames = {
+        'restart_cs2': 'Restart CS2 Game Server',
+        'restart_bot': 'Restart Discord 24/7 Bot',
+        'reload_plugins': 'Reload All CSS Plugins'
+      };
+      const title = actionNames[action] || action;
+      openConfirmModal(
+        title,
+        `Are you sure you want to execute "${title}"?`,
+        async () => {
+          log(`Triggering action: ${action}...`);
+          try {
+            const res = await fetch('/api/service/action', {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({action: action})
+            });
+            const out = await res.json();
+            log(`Result: ${out.output || out.status}`);
+            showToast(`Action "${title}" completed.`, 'success');
+            refreshServices();
+          } catch (e) {
+            log('[ERROR] Action error: ' + e);
+            showToast('Action error: ' + e, 'error');
+          }
+        },
+        title,
+        action === 'restart_cs2'
+      );
     }
 
     async function refreshServices() {
@@ -1155,13 +1536,15 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
     async function triggerClientSync() {
       log('Running client anthem sync...');
+      showToast('Syncing anthems to local CS2...', 'info');
       try {
         const res = await fetch('/api/sync_client', { method: 'POST' });
         const out = await res.json();
         log(out.output || 'Sync completed.');
-        alert('Local CS2 client sync finished.');
+        showToast('Local CS2 client sync finished.', 'success');
       } catch (e) {
         log('[ERROR] Sync error: ' + e);
+        showToast('Sync error: ' + e, 'error');
       }
     }
 
@@ -1171,22 +1554,33 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         const res = await fetch('/api/launch_visual_studio', { method: 'POST' });
         const out = await res.json();
         log(out.message || 'Visual MVP Studio launched.');
+        showToast('Visual MVP Web Studio started on port 5500.', 'info');
       } catch (e) {
         log('[ERROR] Error launching studio: ' + e);
+        showToast('Error launching studio: ' + e, 'error');
       }
     }
 
-    async function triggerWorkshopRebuild() {
-      if (!confirm('Rebuild all staged anthems, compile to vsnd_c, and deploy VPK to server?')) return;
-      log('Building and compiling Workshop Addon wlzMVP... (this may take 20-40s)');
-      try {
-        const res = await fetch('/api/rebuild_workshop', { method: 'POST' });
-        const out = await res.json();
-        log(out.output || 'Rebuild complete.');
-        alert('Workshop Addon rebuilt and deployed to server.');
-      } catch (e) {
-        log('[ERROR] Error rebuilding addon: ' + e);
-      }
+    function triggerWorkshopRebuild() {
+      openConfirmModal(
+        'Rebuild Workshop Addon',
+        'Rebuild all staged anthems, compile to vsnd_c, and deploy VPK to server? (This takes 20-40 seconds)',
+        async () => {
+          log('Building and compiling Workshop Addon wlzMVP... (this may take 20-40s)');
+          showToast('Rebuilding workshop addon in background...', 'info');
+          try {
+            const res = await fetch('/api/rebuild_workshop', { method: 'POST' });
+            const out = await res.json();
+            log(out.output || 'Rebuild complete.');
+            showToast('Workshop Addon rebuilt and deployed to server.', 'success');
+          } catch (e) {
+            log('[ERROR] Error rebuilding addon: ' + e);
+            showToast('Error rebuilding addon: ' + e, 'error');
+          }
+        },
+        'Rebuild Addon',
+        false
+      );
     }
 
     async function launchWorkshopTools() {
@@ -1195,26 +1589,15 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         const res = await fetch('/api/launch_workshop_tools', { method: 'POST' });
         const out = await res.json();
         log(out.message || 'CS2 Tools started.');
+        showToast('CS2 Workshop Tools launched.', 'info');
       } catch (e) {
         log('[ERROR] Error starting CS2 tools: ' + e);
+        showToast('Error starting tools: ' + e, 'error');
       }
     }
 
     function openFileConverterPrompt() {
-      const p = prompt("Enter full path to audio file on your PC to convert to clean 44.1kHz MP3:");
-      if (!p) return;
-      log(`Converting audio file: ${p}...`);
-      fetch('/api/convert_mp3', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({path: p})
-      })
-      .then(r => r.json())
-      .then(d => {
-        log(d.output || 'Conversion complete.');
-        alert(d.output || 'Conversion complete.');
-      })
-      .catch(e => log('[ERROR] Conversion error: ' + e));
+      openConvertModal();
     }
 
     // Initial Load
@@ -1463,18 +1846,46 @@ def main():
     port = 5890
     server = HTTPServer(("127.0.0.1", port), ControlCenterHandler)
     url = f"http://127.0.0.1:{port}"
+    
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+
     print("=" * 65)
     print("        CS2 Server Control Center (Active)")
     print("=" * 65)
     print(f"[*] Server Control Center running at: {url}")
-    print("[*] Launching native application window...")
-    open_app_window(url)
-    print("[*] Press Ctrl+C in this terminal window to stop the server.")
+    print("[*] Launching native standalone application window...")
 
+    launched_standalone = False
     try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        print("\n[*] Control Center closed gracefully.")
+        import webview
+        window = webview.create_window(
+            'CS2 Server Control Center',
+            url,
+            width=1180,
+            height=860,
+            min_size=(900, 600),
+            background_color='#000000'
+        )
+        launched_standalone = True
+        webview.start()
+    except Exception as e:
+        print(f"[!] Native window error: {e}")
+        launched_standalone = False
+
+    if not launched_standalone:
+        open_app_window(url)
+        print("[*] Standalone GUI unavailable. Opened browser fallback.")
+        print("[*] Press Ctrl+C in this terminal window to stop the server.")
+        try:
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            pass
+
+    server.shutdown()
+    print("\n[*] Control Center closed gracefully.")
 
 if __name__ == "__main__":
     main()
+
