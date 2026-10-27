@@ -80,6 +80,21 @@
   6. In `OnCommandRefresh` (`/wp`) and `OnCommandSkinRefresh`, properly queued `RefreshWeapons` onto `Server.NextFrame` after `await WeaponSync.GetPlayerData(playerInfo2)` finishes, guaranteeing the latest website/database skins load seamlessly without delaying or breaking gameplay.
   7. Built and deployed to `plugins/WeaponPaints/WeaponPaints.dll`, with persistent source saved in `/home/csgoserver/cs2-weaponpaints`.
 
+### 6. Live Knife & Weapon Skin Application Fix (`/wp`, `/knife`, `/ws`)
+- **Bug Description**:
+  After using `/wp` (or choosing a knife in `/knife` or skin in `/ws`), the player's knife model changed (e.g. into Karambit), but had **no skin** (plain vanilla/unpainted). The chosen paint kit only appeared after dying and respawning in the next round.
+- **Root Cause**:
+  1. In Counter-Strike 2, viewmodel material shaders and texture compositing are compiled once upon weapon entity instantiation (`GiveNamedItem`) and deployment.
+  2. Modifying `m_nFallbackPaintKit` or dynamic attributes on an *already-existing* in-hand weapon entity does not trigger the CS2 client engine to re-compile the skin shaders on the active viewmodel.
+  3. `SubclassChange` altered the 3D mesh geometry in-place, but the client kept the default vanilla material. Only upon death and respawn did the game spawn a brand-new entity, triggering `OnGiveNamedItemPost` and rendering the skin.
+- **Fix**:
+  1. Implemented smart dirty-checking (`WeaponNeedsRefresh`): checks if current equipped knife definition index or fallback paint kit differs from the player's configured database/menu settings.
+  2. If a knife or gun needs refreshing, cleanly detaches it from the player using CounterStrikeSharp's native engine call `pawn.RemovePlayerItem(weapon)` and deletes the entity with `weapon.Remove()` (`UTIL_Remove`).
+  3. Using `RemovePlayerItem` ensures the entity handle is cleanly un-hooked from `CCSPlayer_WeaponServices.m_hMyWeapons`, preventing any dead handles or weapon-switching lockups.
+  4. Scheduled a safe `0.15f` timer to re-give the clean fresh entities (`CsItem.DefaultKnifeCT`/`DefaultKnifeT` or gun classname), automatically triggering `OnGiveNamedItemPost` and applying `SubclassChange` + custom paint kit, wear, seed, and stickers before drawing.
+  5. Saved and restored the player's previously active weapon slot (`slot1`, `slot2`, or `slot3`), restoring ammo counts (`Clip1` and `ReserveAmmo`), so the player immediately holds their new knife/weapon with its proper skin rendered while alive!
+  6. Tested, built Release binary (`WeaponPaints.dll`), deployed to `plugins/WeaponPaints/WeaponPaints.dll`, and verified via RCON.
+
 ---
 
 ## Active Configuration Files
