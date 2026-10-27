@@ -12,7 +12,9 @@
   - `AdminPlus` (`wlzadmin`): `/home/csgoserver/cs2-adminplus`
   - `MenuManagerCore` (`/menu` WASD menu engine): `/home/csgoserver/cs2-menumanager`
   - `WeaponPaints` (Skins, Knives, Gloves): `/home/csgoserver/cs2-weaponpaints`
-- **Systemd Service**: `cs2.service` (`systemctl restart cs2`, `systemctl status cs2`)
+- **Systemd Service (CS2 Game Server)**: `cs2.service` (`systemctl restart cs2`, `systemctl status cs2`)
+- **Systemd Service (Discord Status Bot)**: `cs2-discord-bot.service` (`systemctl restart cs2-discord-bot`, `systemctl status cs2-discord-bot`)
+- **Discord Bot Directory**: `/home/csgoserver/cs2-discord-bot` (Config: `/home/csgoserver/cs2-discord-bot/config.json`)
 
 ---
 
@@ -94,6 +96,22 @@
   4. Scheduled a safe `0.15f` timer to re-give the clean fresh entities (`CsItem.DefaultKnifeCT`/`DefaultKnifeT` or gun classname), automatically triggering `OnGiveNamedItemPost` and applying `SubclassChange` + custom paint kit, wear, seed, and stickers before drawing.
   5. Saved and restored the player's previously active weapon slot (`slot1`, `slot2`, or `slot3`), restoring ammo counts (`Clip1` and `ReserveAmmo`), so the player immediately holds their new knife/weapon with its proper skin rendered while alive!
   6. Tested, built Release binary (`WeaponPaints.dll`), deployed to `plugins/WeaponPaints/WeaponPaints.dll`, and verified via RCON.
+
+### 7. 24/7 Discord Live Status & Player Count Bot
+- **Objective**: Host a standalone Discord bot on the VPS that displays live players and the current map 24/7 in its Discord status/activity, updates a pinned live embed message in a dedicated Discord channel every 15s, and supports a `/status` slash command.
+- **Architecture & Design**:
+  1. Built an ultra-lightweight, non-blocking asynchronous Python bot using `discord.py` and direct low-level UDP Valve A2S (`A2S_INFO` and `A2S_PLAYER`) protocol queries to `127.0.0.1:27015`.
+  2. Runs as an isolated, standalone `systemd` service (`cs2-discord-bot.service`) independent of the CS2 game engine. This ensures the bot stays online 24/7 even during server reboots, map changes, or CS2 crashes (switching presence gracefully to `🔴 Server Offline` in DND mode).
+  3. Automatically tracks and updates the live embed in `#status` (`1564746794976546999`), updating player counts, map name, IP, and a one-click Steam connect link (`steam://connect/81.181.113.120:27015`).
+- **Bot Configuration**:
+  - Service Unit: `/etc/systemd/system/cs2-discord-bot.service` (auto-restarts on failure, runs under user `csgoserver`).
+  - Directory: `/home/csgoserver/cs2-discord-bot/`
+  - Config: `/home/csgoserver/cs2-discord-bot/config.json`
+  - Virtualenv: `/home/csgoserver/cs2-discord-bot/venv`
+- **Management Commands**:
+  - Check status: `systemctl status cs2-discord-bot`
+  - Restart bot: `systemctl restart cs2-discord-bot`
+  - View live logs: `journalctl -u cs2-discord-bot -f`
 
 ---
 
