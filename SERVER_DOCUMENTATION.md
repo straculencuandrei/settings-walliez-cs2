@@ -118,6 +118,20 @@
   - Restart bot: `systemctl restart cs2-discord-bot`
   - View live logs: `journalctl -u cs2-discord-bot -f`
 
+### 8. Discord Server Logging (Chat Logs & Player Join/Leave Logs)
+- **Objective**: Relay all in-game chat messages and player join/leave events into dedicated Discord channels with rich embeds, Steam profile links, and player avatars.
+- **Architecture**:
+  1. **Chat Logs**: Handled via `Chat-Logger-GoldKingZ` (already installed and loaded). Captures public and team chat, excludes in-game commands (`!`, `.`, `/`), attaches Steam avatar, and formats a rich Discord embed with the player's name and Steam profile link.
+     - Config: `/home/csgoserver/server-cs2/game/csgo/addons/counterstrikesharp/plugins/Chat-Logger-GoldKingZ/config/config.json`
+     - Target field: `"Discord_WebHook": "<WEBHOOK_URL>"`
+  2. **Player Connect / Disconnect Logs**: Handled via enhanced `ConnectAnnounce` plugin (compiled on .NET 8).
+     - Resolves player country and city via `GeoLite2-City.mmdb`.
+     - Suppresses transient reconnects and map change hops so map voting/switches never spam the log channel.
+     - Sends `🟢 Player Connected` and `🔴 Player Disconnected` embeds with player name, clickable Steam profile link, SteamID64, country/city, reason, and live player count (`X / 24`).
+     - Config: `/home/csgoserver/server-cs2/game/csgo/addons/counterstrikesharp/configs/plugins/ConnectAnnounce/ConnectAnnounceConfig.json`
+     - Target field: `"DiscordWebhookUrl": "<WEBHOOK_URL>"`
+     - Source repository: `/home/csgoserver/test-cannounce/`
+
 ---
 
 ## Active Configuration Files
