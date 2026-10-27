@@ -99,7 +99,7 @@ def a2s_info():
         pass
     return {"online": False, "name": "Counter-Strike 2 Server", "map": "Unknown", "players": 0, "max_players": 24}
 
-# HTML Template with modern Dark Glassmorphism UI
+# HTML Template with Pitch-Black Minimalist Luxury UI (Zero Emojis)
 HTML_TEMPLATE = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -108,40 +108,41 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   <title>CS2 Server Control Center</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <style>
     :root {
-      --bg: #090d16;
-      --card-bg: rgba(17, 24, 39, 0.75);
-      --card-border: rgba(255, 255, 255, 0.08);
-      --primary: #38bdf8;
-      --primary-hover: #0284c7;
-      --accent: #818cf8;
+      --bg: #000000;
+      --card-bg: #080808;
+      --card-border: #1a1a1a;
+      --card-border-subtle: #121212;
+      --primary: #ffffff;
+      --primary-hover: #e4e4e7;
+      --accent: #27272a;
       --success: #22c55e;
-      --warning: #facc15;
+      --warning: #eab308;
       --danger: #ef4444;
-      --text: #f1f5f9;
-      --text-muted: #94a3b8;
+      --text: #ededed;
+      --text-muted: #71717a;
+      --text-dim: #52525b;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       background: var(--bg);
-      background-image: 
-        radial-gradient(at 0% 0%, rgba(56, 189, 248, 0.08) 0px, transparent 50%),
-        radial-gradient(at 100% 100%, rgba(129, 140, 248, 0.08) 0px, transparent 50%);
       color: var(--text);
-      font-family: 'Inter', sans-serif;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
       min-height: 100vh;
       display: flex;
       flex-direction: column;
       overflow-x: hidden;
+      -webkit-font-smoothing: antialiased;
     }
+
     /* Header */
     header {
-      background: rgba(15, 23, 42, 0.85);
-      backdrop-filter: blur(12px);
+      background: #000000;
       border-bottom: 1px solid var(--card-border);
-      padding: 14px 24px;
+      padding: 0 24px;
+      height: 54px;
       display: flex;
       align-items: center;
       justify-content: space-between;
@@ -155,250 +156,275 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       gap: 12px;
     }
     .brand-logo {
-      width: 36px;
-      height: 36px;
-      background: linear-gradient(135deg, #0284c7, #6366f1);
-      border-radius: 10px;
+      width: 28px;
+      height: 28px;
+      background: #111111;
+      border: 1px solid #27272a;
+      border-radius: 6px;
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 1.2rem;
-      box-shadow: 0 4px 12px rgba(2, 132, 199, 0.4);
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      color: #ffffff;
     }
     .brand-title {
-      font-size: 1.15rem;
-      font-weight: 700;
-      letter-spacing: -0.02em;
-      background: linear-gradient(to right, #ffffff, #cbd5e1);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
+      font-size: 0.92rem;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+      color: #ffffff;
+    }
+    .brand-sub {
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      font-family: 'JetBrains Mono', monospace;
     }
     .status-badge {
       display: flex;
       align-items: center;
       gap: 8px;
-      background: rgba(34, 197, 94, 0.12);
-      border: 1px solid rgba(34, 197, 94, 0.3);
-      padding: 6px 14px;
+      background: #09090b;
+      border: 1px solid var(--card-border);
+      padding: 4px 10px;
       border-radius: 9999px;
-      font-size: 0.82rem;
-      font-weight: 600;
-      color: #4ade80;
+      font-size: 0.72rem;
+      font-weight: 500;
+      color: #a1a1aa;
+      font-family: 'JetBrains Mono', monospace;
     }
     .status-dot {
-      width: 8px;
-      height: 8px;
+      width: 6px;
+      height: 6px;
       border-radius: 50%;
       background: #22c55e;
-      box-shadow: 0 0 10px #22c55e;
+      box-shadow: 0 0 8px rgba(34, 197, 94, 0.7);
     }
 
-    /* Main Container & Tabs */
+    /* App Container & Navigation */
     .app-container {
-      max-width: 1200px;
+      max-width: 1100px;
       margin: 0 auto;
       width: 100%;
-      padding: 24px;
+      padding: 20px 24px;
       flex: 1;
       display: flex;
       flex-direction: column;
-      gap: 20px;
+      gap: 16px;
     }
     .nav-tabs {
       display: flex;
-      gap: 8px;
-      background: rgba(15, 23, 42, 0.6);
-      padding: 6px;
-      border-radius: 14px;
+      gap: 4px;
+      background: #080808;
+      padding: 4px;
+      border-radius: 8px;
       border: 1px solid var(--card-border);
       overflow-x: auto;
     }
     .tab-btn {
       background: transparent;
-      border: none;
+      border: 1px solid transparent;
       color: var(--text-muted);
-      font-size: 0.9rem;
-      font-weight: 600;
-      padding: 10px 18px;
-      border-radius: 10px;
+      font-size: 0.78rem;
+      font-weight: 500;
+      letter-spacing: 0.02em;
+      padding: 0 14px;
+      height: 32px;
+      border-radius: 6px;
       cursor: pointer;
-      display: flex;
+      display: inline-flex;
       align-items: center;
-      gap: 8px;
-      transition: all 0.2s;
+      transition: all 0.15s ease;
       white-space: nowrap;
     }
     .tab-btn:hover {
       color: var(--text);
-      background: rgba(255, 255, 255, 0.04);
+      background: #111111;
     }
     .tab-btn.active {
-      color: #fff;
-      background: linear-gradient(135deg, rgba(2, 132, 199, 0.6), rgba(99, 102, 241, 0.6));
-      border: 1px solid rgba(255, 255, 255, 0.15);
-      box-shadow: 0 4px 12px rgba(2, 132, 199, 0.25);
+      color: #ffffff;
+      background: #141414;
+      border-color: #27272a;
+      font-weight: 600;
     }
 
-    /* Content Cards */
+    /* Tab Content Cards */
     .tab-content { display: none; }
-    .tab-content.active { display: block; animation: fadeIn 0.25s ease-out; }
-    @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+    .tab-content.active { display: block; animation: fadeIn 0.2s ease-out; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(2px); } to { opacity: 1; transform: translateY(0); } }
 
     .card {
       background: var(--card-bg);
       border: 1px solid var(--card-border);
-      border-radius: 16px;
-      padding: 24px;
-      backdrop-filter: blur(10px);
-      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
-      margin-bottom: 20px;
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 14px;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
     }
     .card-header {
       display: flex;
       align-items: center;
       justify-content: space-between;
+      gap: 12px;
       margin-bottom: 18px;
+      padding-bottom: 14px;
+      border-bottom: 1px solid var(--card-border-subtle);
+      flex-wrap: wrap;
     }
     .card-title {
-      font-size: 1.15rem;
-      font-weight: 700;
-      color: #fff;
-      display: flex;
-      align-items: center;
-      gap: 8px;
+      font-size: 0.92rem;
+      font-weight: 600;
+      color: #ffffff;
+      letter-spacing: -0.01em;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
     }
     .card-desc {
-      font-size: 0.85rem;
+      font-size: 0.76rem;
       color: var(--text-muted);
       margin-top: 2px;
     }
 
-    /* Forms & Controls */
+    /* Form Fields */
     .form-group {
-      margin-bottom: 16px;
+      margin-bottom: 14px;
     }
     label {
       display: block;
-      font-size: 0.82rem;
+      font-size: 0.72rem;
       font-weight: 600;
       color: var(--text-muted);
       text-transform: uppercase;
       letter-spacing: 0.05em;
-      margin-bottom: 8px;
+      margin-bottom: 6px;
     }
-    input[type="text"], input[type="number"], textarea, select {
+    input[type="text"], input[type="number"], select {
       width: 100%;
-      background: rgba(3, 7, 18, 0.6);
-      border: 1px solid rgba(255, 255, 255, 0.12);
-      border-radius: 10px;
-      padding: 12px 14px;
-      color: #fff;
+      background: #030303;
+      border: 1px solid var(--card-border);
+      border-radius: 6px;
+      padding: 0 12px;
+      height: 34px;
+      color: #f4f4f5;
       font-family: inherit;
-      font-size: 0.95rem;
+      font-size: 0.82rem;
       outline: none;
-      transition: border-color 0.2s, box-shadow 0.2s;
+      transition: border-color 0.15s;
     }
-    input[type="text"]:focus, input[type="number"]:focus, textarea:focus {
-      border-color: var(--primary);
-      box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.2);
+    input[type="text"]:focus, input[type="number"]:focus, select:focus {
+      border-color: #3f3f46;
     }
     .input-row {
       display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 16px;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 14px;
+      margin-bottom: 14px;
     }
 
     /* Buttons */
     .btn {
       display: inline-flex;
       align-items: center;
-      gap: 8px;
-      background: linear-gradient(135deg, #0284c7, #2563eb);
-      color: #fff;
-      border: none;
-      border-radius: 10px;
-      padding: 12px 20px;
+      justify-content: center;
+      gap: 6px;
+      background: #ffffff;
+      color: #000000;
+      border: 1px solid #ffffff;
+      border-radius: 5px;
+      padding: 0 14px;
+      height: 32px;
       font-weight: 600;
-      font-size: 0.92rem;
+      font-size: 0.78rem;
+      letter-spacing: 0.01em;
       cursor: pointer;
-      transition: all 0.2s;
-      box-shadow: 0 4px 14px rgba(2, 132, 199, 0.35);
+      transition: all 0.15s ease;
+      white-space: nowrap;
+      flex-shrink: 0;
+      text-decoration: none;
     }
     .btn:hover {
-      background: linear-gradient(135deg, #0369a1, #1d4ed8);
-      transform: translateY(-1px);
+      background: #e4e4e7;
+      border-color: #e4e4e7;
     }
     .btn-secondary {
-      background: rgba(255, 255, 255, 0.08);
-      border: 1px solid rgba(255, 255, 255, 0.12);
-      box-shadow: none;
+      background: #111111;
+      color: #d4d4d8;
+      border: 1px solid var(--card-border);
     }
     .btn-secondary:hover {
-      background: rgba(255, 255, 255, 0.14);
+      background: #18181b;
+      color: #ffffff;
+      border-color: #3f3f46;
     }
     .btn-danger {
-      background: linear-gradient(135deg, #dc2626, #b91c1c);
-      box-shadow: 0 4px 12px rgba(220, 38, 38, 0.3);
+      background: rgba(239, 68, 68, 0.08);
+      color: #f87171;
+      border: 1px solid rgba(239, 68, 68, 0.25);
     }
     .btn-danger:hover {
-      background: #991b1b;
+      background: rgba(239, 68, 68, 0.2);
+      color: #ffffff;
+      border-color: #ef4444;
     }
     .btn-sm {
-      padding: 6px 12px;
-      font-size: 0.8rem;
-      border-radius: 8px;
+      height: 26px;
+      padding: 0 10px;
+      font-size: 0.72rem;
+      border-radius: 4px;
     }
 
-    /* Message Item List */
+    /* Message Item Rows */
     .msg-list {
       display: flex;
       flex-direction: column;
-      gap: 12px;
-      margin-bottom: 20px;
+      gap: 8px;
+      margin-bottom: 18px;
     }
     .msg-item {
-      background: rgba(3, 7, 18, 0.4);
-      border: 1px solid rgba(255, 255, 255, 0.08);
-      border-radius: 12px;
-      padding: 14px 18px;
+      background: #040404;
+      border: 1px solid var(--card-border);
+      border-radius: 6px;
+      padding: 10px 14px;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 16px;
+      gap: 12px;
     }
     .msg-text-box {
-      flex: 1;
+      flex: 1 1 auto;
+      min-width: 0;
       font-family: 'JetBrains Mono', monospace;
-      font-size: 0.88rem;
-      color: #e2e8f0;
-      word-break: break-all;
+      font-size: 0.8rem;
+      color: #e4e4e7;
+      word-break: break-word;
     }
     .msg-actions {
+      flex-shrink: 0;
       display: flex;
-      gap: 8px;
+      gap: 6px;
     }
 
     /* CS2 In-Game Chat Simulator */
     .cs2-chat-sim {
-      background: rgba(0, 0, 0, 0.75);
-      border: 1px solid rgba(255, 255, 255, 0.15);
-      border-radius: 10px;
-      padding: 16px;
+      background: #000000;
+      border: 1px solid var(--card-border);
+      border-radius: 6px;
+      padding: 12px 14px;
       font-family: 'Segoe UI', Tahoma, sans-serif;
-      font-size: 0.95rem;
-      min-height: 80px;
+      font-size: 0.88rem;
+      min-height: 48px;
       display: flex;
       align-items: center;
-      margin-top: 10px;
-      box-shadow: inset 0 2px 6px rgba(0,0,0,0.6);
+      margin-top: 8px;
     }
     .cs2-chat-label {
-      font-size: 0.75rem;
+      font-size: 0.72rem;
       text-transform: uppercase;
-      font-weight: 700;
-      letter-spacing: 0.06em;
-      color: #64748b;
-      margin-bottom: 6px;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      margin-top: 14px;
+      margin-bottom: 4px;
     }
     .cs2-preview-text {
       color: #ffffff;
@@ -406,64 +432,187 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       font-weight: 500;
     }
 
-    /* Terminal Output Drawer */
-    .terminal-drawer {
-      background: #030712;
-      border: 1px solid rgba(255, 255, 255, 0.1);
-      border-radius: 12px;
-      padding: 14px;
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 0.82rem;
-      max-height: 160px;
-      overflow-y: auto;
-      color: #a7f3d0;
-      box-shadow: inset 0 2px 8px rgba(0,0,0,0.8);
-      white-space: pre-wrap;
-    }
-
-    /* Color Palette Tags Pill */
+    /* Color Palette Pills */
     .color-tags-container {
       display: flex;
       flex-wrap: wrap;
       gap: 6px;
-      margin-top: 8px;
+      margin-top: 6px;
     }
     .color-tag-pill {
-      font-size: 0.75rem;
-      padding: 2px 8px;
-      border-radius: 6px;
-      background: rgba(255, 255, 255, 0.06);
+      font-size: 0.7rem;
+      font-family: 'JetBrains Mono', monospace;
+      padding: 0 7px;
+      height: 22px;
+      line-height: 20px;
+      border-radius: 4px;
+      background: #0d0d0d;
       cursor: pointer;
-      border: 1px solid rgba(255, 255, 255, 0.1);
-      transition: background 0.15s;
+      border: 1px solid var(--card-border);
+      transition: background 0.15s, border-color 0.15s;
     }
-    .color-tag-pill:hover { background: rgba(255, 255, 255, 0.15); }
-    
-    /* Grid for quick stats */
-    .stats-grid {
+    .color-tag-pill:hover {
+      background: #18181b;
+      border-color: #3f3f46;
+    }
+
+    /* Convars Dense Settings Grid */
+    .convars-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+      gap: 8px;
+    }
+    .convar-row {
+      background: #040404;
+      border: 1px solid var(--card-border);
+      border-radius: 6px;
+      padding: 10px 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .convar-meta {
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+    .convar-name {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: #ffffff;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .convar-desc {
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      margin-top: 2px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .convar-input {
+      width: 76px !important;
+      height: 28px !important;
+      padding: 0 8px !important;
+      font-family: 'JetBrains Mono', monospace !important;
+      font-size: 0.78rem !important;
+      text-align: right;
+      flex-shrink: 0;
+      background: #000000 !important;
+      border: 1px solid var(--card-border) !important;
+      border-radius: 4px !important;
+      color: #ffffff !important;
+    }
+
+    /* Action Rows for MVP Studio & FastDL */
+    .action-rows-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .action-row {
+      background: #040404;
+      border: 1px solid var(--card-border);
+      border-radius: 6px;
+      padding: 12px 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    .action-row-meta {
+      flex: 1 1 280px;
+    }
+    .action-row-title {
+      font-size: 0.84rem;
+      font-weight: 600;
+      color: #ffffff;
+    }
+    .action-row-desc {
+      font-size: 0.74rem;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+
+    /* Services Grid */
+    .services-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+    .service-card {
+      background: #040404;
+      border: 1px solid var(--card-border);
+      border-radius: 6px;
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .service-card .btn {
+      width: 100%;
+      height: 30px;
+    }
+
+    /* Summary Stat Cards */
+    .summary-grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-      gap: 16px;
-      margin-bottom: 20px;
+      gap: 10px;
+      margin-bottom: 14px;
     }
-    .stat-card {
-      background: rgba(15, 23, 42, 0.6);
+    .summary-card {
+      background: #040404;
       border: 1px solid var(--card-border);
-      border-radius: 12px;
-      padding: 16px;
+      border-radius: 6px;
+      padding: 12px 14px;
     }
-    .stat-label { font-size: 0.8rem; color: var(--text-muted); font-weight: 600; }
-    .stat-val { font-size: 1.3rem; font-weight: 700; color: #fff; margin-top: 4px; }
+    .summary-label {
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      font-weight: 600;
+    }
+    .summary-val {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.88rem;
+      font-weight: 600;
+      color: #ffffff;
+      margin-top: 4px;
+      word-break: break-all;
+    }
+
+    /* Terminal Output Drawer */
+    .terminal-drawer {
+      background: #000000;
+      border: 1px solid #18181b;
+      border-radius: 4px;
+      padding: 10px 12px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.74rem;
+      line-height: 1.5;
+      max-height: 120px;
+      overflow-y: auto;
+      color: #a1a1aa;
+      white-space: pre-wrap;
+    }
   </style>
 </head>
 <body>
 
   <header>
     <div class="brand">
-      <div class="brand-logo">⚡</div>
+      <div class="brand-logo">CS2</div>
       <div>
-        <div class="brand-title">CS2 Server Control Center</div>
-        <div style="font-size: 0.75rem; color: #64748b;">Host: 81.181.113.120:27015 • talent.walliez.xyz</div>
+        <div class="brand-title">Server Control Center</div>
+        <div class="brand-sub">81.181.113.120:27015 | talent.walliez.xyz</div>
       </div>
     </div>
     <div class="status-badge" id="headerStatusBadge">
@@ -476,11 +625,11 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
     <!-- Navigation Tabs -->
     <div class="nav-tabs">
-      <button class="tab-btn active" onclick="switchTab('tab-announcements')">📢 In-Game Announcements</button>
-      <button class="tab-btn" onclick="switchTab('tab-hostname')">🏷️ Server Name & Hostname</button>
-      <button class="tab-btn" onclick="switchTab('tab-convars')">⚙️ Match Settings & Convars</button>
-      <button class="tab-btn" onclick="switchTab('tab-mvp')">🎵 MVP Anthems & FastDL</button>
-      <button class="tab-btn" onclick="switchTab('tab-services')">📊 Services & Discord Bot</button>
+      <button class="tab-btn active" onclick="switchTab('tab-announcements')">Announcements</button>
+      <button class="tab-btn" onclick="switchTab('tab-hostname')">Server Name</button>
+      <button class="tab-btn" onclick="switchTab('tab-convars')">Match Convars</button>
+      <button class="tab-btn" onclick="switchTab('tab-mvp')">MVP Anthems</button>
+      <button class="tab-btn" onclick="switchTab('tab-services')">Services & Bot</button>
     </div>
 
     <!-- TAB 1: Announcements Manager -->
@@ -488,29 +637,29 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       <div class="card">
         <div class="card-header">
           <div>
-            <div class="card-title">📢 ServerAnnouncer Settings</div>
+            <div class="card-title">ServerAnnouncer Settings</div>
             <div class="card-desc">Scheduled in-game chat messages promoting skinz, mvpz, and community links.</div>
           </div>
-          <button class="btn btn-sm btn-secondary" onclick="loadAnnouncements()">🔄 Reload from Server</button>
+          <button class="btn btn-sm btn-secondary" onclick="loadAnnouncements()">Reload Config</button>
         </div>
 
         <div class="input-row">
           <div class="form-group">
-            <label>Interval Between Announcements (Seconds)</label>
+            <label>Interval (Seconds)</label>
             <input type="number" id="announcerInterval" min="15" max="600" value="90">
           </div>
           <div class="form-group">
             <label>Rotation Mode</label>
             <select id="announcerRandom">
               <option value="true">Random Order (Non-Repeating)</option>
-              <option value="false">Sequential Order (In List Order)</option>
+              <option value="false">Sequential Order (List Sequence)</option>
             </select>
           </div>
         </div>
 
         <div class="form-group">
           <label>Announcement Prefix</label>
-          <input type="text" id="announcerPrefix" value="{Gold}★ {LightBlue}[Walliez]{Default}" oninput="updateChatPreview()">
+          <input type="text" id="announcerPrefix" value="{Gold}[Walliez]{Default}" oninput="updateChatPreview()">
           <div class="color-tags-container">
             <span class="color-tag-pill" onclick="insertColorTag('{Gold}')" style="color: #E4AE39;">{Gold}</span>
             <span class="color-tag-pill" onclick="insertColorTag('{LightBlue}')" style="color: #5E98D9;">{LightBlue}</span>
@@ -523,23 +672,23 @@ HTML_TEMPLATE = """<!DOCTYPE html>
           </div>
         </div>
 
-        <div class="card-header" style="margin-top: 24px; margin-bottom: 12px;">
-          <div class="card-title" style="font-size: 1rem;">Active Announcement Messages</div>
-          <button class="btn btn-sm" onclick="addNewMessagePrompt()">➕ Add New Message</button>
+        <div class="card-header" style="margin-top: 18px; margin-bottom: 10px;">
+          <div class="card-title" style="font-size: 0.84rem;">Active Announcement Messages</div>
+          <button class="btn btn-sm" onclick="addNewMessagePrompt()">Add Message</button>
         </div>
 
         <div class="msg-list" id="announcementsList">
-          <div style="color: var(--text-muted); font-size: 0.9rem;">Loading messages...</div>
+          <div style="color: var(--text-muted); font-size: 0.8rem;">Loading messages...</div>
         </div>
 
-        <div class="cs2-chat-label">🎮 Live CS2 In-Game Chat Simulator Preview:</div>
+        <div class="cs2-chat-label">Live In-Game Chat Simulator Preview:</div>
         <div class="cs2-chat-sim">
           <div class="cs2-preview-text" id="cs2ChatSimPreview">Previewing announcement...</div>
         </div>
 
-        <div style="margin-top: 24px; display: flex; justify-content: flex-end; gap: 12px;">
-          <button class="btn btn-secondary" onclick="loadAnnouncements()">Cancel Changes</button>
-          <button class="btn" onclick="saveAnnouncementsToServer()">🚀 Save & Deploy to Live Server</button>
+        <div style="margin-top: 20px; display: flex; justify-content: flex-end; gap: 8px;">
+          <button class="btn btn-secondary" onclick="loadAnnouncements()">Cancel</button>
+          <button class="btn" onclick="saveAnnouncementsToServer()">Save & Deploy Live</button>
         </div>
       </div>
     </div>
@@ -549,10 +698,10 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       <div class="card">
         <div class="card-header">
           <div>
-            <div class="card-title">🏷️ Server Hostname / Title Manager</div>
+            <div class="card-title">Server Hostname & Title</div>
             <div class="card-desc">Instantly updates the live CS2 server name via RCON and saves permanently to server.cfg.</div>
           </div>
-          <button class="btn btn-sm btn-secondary" onclick="loadHostname()">🔄 Query Live Name</button>
+          <button class="btn btn-sm btn-secondary" onclick="loadHostname()">Query Live Name</button>
         </div>
 
         <div class="form-group">
@@ -560,16 +709,16 @@ HTML_TEMPLATE = """<!DOCTYPE html>
           <input type="text" id="serverHostnameInput" placeholder="Counter-Strike 2 Server" oninput="updateHostnamePreview()">
         </div>
 
-        <div class="cs2-chat-label" style="margin-top: 16px;">Steam & CS2 Server Browser Preview:</div>
-        <div style="background: rgba(3,7,18,0.7); border: 1px solid rgba(255,255,255,0.12); border-radius: 10px; padding: 16px;">
-          <div style="display: flex; align-items: center; justify-content: space-between;">
-            <div style="font-weight: 700; font-size: 1.05rem; color: #fff;" id="hostnamePreviewText">talent.walliez.xyz</div>
-            <div style="font-size: 0.85rem; color: #4ade80; font-weight: 600;">🟢 Online • 81.181.113.120:27015</div>
+        <div class="cs2-chat-label" style="margin-top: 14px;">Steam & CS2 Server Browser Preview:</div>
+        <div style="background: #040404; border: 1px solid var(--card-border); border-radius: 6px; padding: 14px; margin-top: 6px;">
+          <div style="display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;">
+            <div style="font-weight: 600; font-size: 0.95rem; color: #ffffff;" id="hostnamePreviewText">talent.walliez.xyz</div>
+            <div style="font-size: 0.76rem; color: #22c55e; font-family: 'JetBrains Mono', monospace;">Online | 81.181.113.120:27015</div>
           </div>
         </div>
 
-        <div style="margin-top: 24px; display: flex; justify-content: flex-end;">
-          <button class="btn" onclick="saveHostname()">💾 Apply Hostname Immediately</button>
+        <div style="margin-top: 20px; display: flex; justify-content: flex-end;">
+          <button class="btn" onclick="saveHostname()">Apply Hostname</button>
         </div>
       </div>
     </div>
@@ -579,22 +728,22 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       <div class="card">
         <div class="card-header">
           <div>
-            <div class="card-title">⚙️ Match Settings & Convar Editor</div>
-            <div class="card-desc">Quickly tune round timers, overtime, economy, and game rules.</div>
+            <div class="card-title">Match Settings & Convar Editor</div>
+            <div class="card-desc">Tune round timers, overtime, economy, and competitive match rules.</div>
           </div>
-          <button class="btn btn-sm btn-secondary" onclick="loadConvars()">🔄 Fetch from Server</button>
+          <button class="btn btn-sm btn-secondary" onclick="loadConvars()">Fetch Convars</button>
         </div>
 
         <div class="form-group">
-          <input type="text" id="convarSearch" placeholder="🔍 Search convar or description..." oninput="filterConvars()">
+          <input type="text" id="convarSearch" placeholder="Search convars by name or description..." oninput="filterConvars()">
         </div>
 
-        <div id="convarsGrid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px;">
+        <div class="convars-grid" id="convarsGrid">
           <!-- Populated by JS -->
         </div>
 
-        <div style="margin-top: 24px; display: flex; justify-content: flex-end;">
-          <button class="btn" onclick="saveConvars()">💾 Apply Convar Settings</button>
+        <div style="margin-top: 20px; display: flex; justify-content: flex-end;">
+          <button class="btn" onclick="saveConvars()">Apply Convar Settings</button>
         </div>
       </div>
     </div>
@@ -604,61 +753,61 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       <div class="card">
         <div class="card-header">
           <div>
-            <div class="card-title">🎵 MVP Anthem Studio & Audio Converter</div>
-            <div class="card-desc">Convert, sync, and deploy custom music pack anthems to the CS2 server and local game files.</div>
+            <div class="card-title">MVP Anthem Studio & FastDL</div>
+            <div class="card-desc">Convert, sync, and deploy custom music pack anthems to CS2 and local game files.</div>
           </div>
         </div>
 
-        <div class="stats-grid">
-          <div class="stat-card">
-            <div class="stat-label">Workshop Addon</div>
-            <div class="stat-val" style="font-size: 1.1rem; color: #38bdf8;">wlzMVP (3827657422)</div>
+        <div class="summary-grid">
+          <div class="summary-card">
+            <div class="summary-label">Workshop Addon</div>
+            <div class="summary-val" style="color: #ffffff;">wlzMVP (3827657422)</div>
           </div>
-          <div class="stat-card">
-            <div class="stat-label">FastDL URL</div>
-            <div class="stat-val" style="font-size: 0.95rem; color: #a7f3d0;">http://81.181.113.120/fastdl/</div>
+          <div class="summary-card">
+            <div class="summary-label">FastDL URL</div>
+            <div class="summary-val" style="color: #ffffff;">http://81.181.113.120/fastdl/</div>
           </div>
         </div>
 
-        <div style="display: flex; flex-direction: column; gap: 14px; margin-top: 10px;">
-          <div style="background: rgba(3,7,18,0.5); padding: 18px; border-radius: 12px; border: 1px solid var(--card-border); display: flex; justify-content: space-between; align-items: center;">
-            <div>
-              <div style="font-weight: 600; color: #fff;">Launch Visual MVP Web Studio</div>
-              <div style="font-size: 0.82rem; color: var(--text-muted);">Visual waveform scrubber, player preview, trim controls, and 1-click deployment.</div>
+        <div class="action-rows-list">
+          <div class="action-row">
+            <div class="action-row-meta">
+              <div class="action-row-title">Visual MVP Web Studio</div>
+              <div class="action-row-desc">Interactive browser waveform scrubber, player preview, trim controls, and live deployment.</div>
             </div>
-            <button class="btn" onclick="launchVisualStudio()">🚀 Open Visual Studio</button>
+            <button class="btn" onclick="launchVisualStudio()">Open Visual Studio</button>
           </div>
 
-          <div style="background: rgba(3,7,18,0.5); padding: 18px; border-radius: 12px; border: 1px solid var(--card-border); display: flex; justify-content: space-between; align-items: center;">
-            <div>
-              <div style="font-weight: 600; color: #fff;">1-Click Local Client Sync</div>
-              <div style="font-size: 0.82rem; color: var(--text-muted);">Sync all server MVP Anthems directly to your local Counter-Strike 2 Steam library.</div>
+          <div class="action-row">
+            <div class="action-row-meta">
+              <div class="action-row-title">1-Click Local Client Sync</div>
+              <div class="action-row-desc">Sync all server MVP Anthems directly to your local Counter-Strike 2 Steam directory.</div>
             </div>
-            <button class="btn btn-secondary" onclick="triggerClientSync()">🔄 Sync Local CS2</button>
+            <button class="btn btn-secondary" onclick="triggerClientSync()">Sync Local CS2</button>
           </div>
 
-          <div style="background: rgba(3,7,18,0.5); padding: 18px; border-radius: 12px; border: 1px solid var(--card-border); display: flex; justify-content: space-between; align-items: center;">
-            <div>
-              <div style="font-weight: 600; color: #fff;">Convert Audio to Clean 44.1kHz MP3</div>
-              <div style="font-size: 0.82rem; color: var(--text-muted);">Uses the exact onlineaudioconverter.com 320kbps 44.1kHz CBR algorithm with metadata stripped.</div>
+          <div class="action-row">
+            <div class="action-row-meta">
+              <div class="action-row-title">Clean 44.1kHz MP3 Audio Converter</div>
+              <div class="action-row-desc">Converts audio using exact 320kbps 44.1kHz CBR algorithm with stripped ID3 metadata.</div>
             </div>
-            <button class="btn btn-secondary" onclick="openFileConverterPrompt()">📁 Convert Audio File</button>
+            <button class="btn btn-secondary" onclick="openFileConverterPrompt()">Convert Audio File</button>
           </div>
 
-          <div style="background: rgba(3,7,18,0.5); padding: 18px; border-radius: 12px; border: 1px solid var(--card-border); display: flex; justify-content: space-between; align-items: center;">
-            <div>
-              <div style="font-weight: 600; color: #fff;">Rebuild & Deploy Workshop Addon (wlzMVP)</div>
-              <div style="font-size: 0.82rem; color: var(--text-muted);">Compiles all staged tracks to vsnd_c, generates VPK, and uploads to dedicated server cache.</div>
+          <div class="action-row">
+            <div class="action-row-meta">
+              <div class="action-row-title">Rebuild & Deploy Workshop Addon (wlzMVP)</div>
+              <div class="action-row-desc">Compiles all staged tracks to vsnd_c, generates VPK, and uploads to server workshop cache.</div>
             </div>
-            <button class="btn btn-secondary" onclick="triggerWorkshopRebuild()">🔨 Rebuild Workshop Addon</button>
+            <button class="btn btn-secondary" onclick="triggerWorkshopRebuild()">Rebuild Workshop Addon</button>
           </div>
 
-          <div style="background: rgba(3,7,18,0.5); padding: 18px; border-radius: 12px; border: 1px solid var(--card-border); display: flex; justify-content: space-between; align-items: center;">
-            <div>
-              <div style="font-weight: 600; color: #fff;">Launch CS2 Workshop Tools</div>
-              <div style="font-size: 0.82rem; color: var(--text-muted);">Opens the official Counter-Strike 2 Workshop Tools editor with the wlzMVP addon loaded.</div>
+          <div class="action-row">
+            <div class="action-row-meta">
+              <div class="action-row-title">Counter-Strike 2 Workshop Tools</div>
+              <div class="action-row-desc">Launches the official Counter-Strike 2 Workshop Tools editor with wlzMVP loaded.</div>
             </div>
-            <button class="btn btn-secondary" onclick="launchWorkshopTools()">🛠️ Launch CS2 Tools</button>
+            <button class="btn btn-secondary" onclick="launchWorkshopTools()">Launch CS2 Tools</button>
           </div>
         </div>
       </div>
@@ -669,46 +818,52 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       <div class="card">
         <div class="card-header">
           <div>
-            <div class="card-title">📊 VPS Services & Discord Bot Monitor</div>
-            <div class="card-desc">Control server services, restart processes, and check status.</div>
+            <div class="card-title">VPS Services & Discord Bot</div>
+            <div class="card-desc">Control server services, restart processes, and verify connectivity.</div>
           </div>
-          <button class="btn btn-sm btn-secondary" onclick="refreshServices()">🔄 Refresh Status</button>
+          <button class="btn btn-sm btn-secondary" onclick="refreshServices()">Refresh Status</button>
         </div>
 
-        <div class="stats-grid">
-          <div class="stat-card">
-            <div class="stat-label">CS2 Game Server</div>
-            <div class="stat-val" id="statCs2Status" style="color: #4ade80;">Active (Running)</div>
-            <button class="btn btn-sm btn-danger" style="margin-top: 10px;" onclick="serviceAction('restart_cs2')">Restart CS2 Server</button>
+        <div class="services-grid">
+          <div class="service-card">
+            <div>
+              <div class="summary-label">CS2 Game Server</div>
+              <div class="summary-val" id="statCs2Status" style="color: #22c55e;">Active (Running)</div>
+            </div>
+            <button class="btn btn-danger" onclick="serviceAction('restart_cs2')">Restart CS2 Server</button>
           </div>
-          <div class="stat-card">
-            <div class="stat-label">Discord 24/7 Bot</div>
-            <div class="stat-val" id="statBotStatus" style="color: #4ade80;">Active (Running)</div>
-            <button class="btn btn-sm btn-secondary" style="margin-top: 10px;" onclick="serviceAction('restart_bot')">Restart Discord Bot</button>
+          <div class="service-card">
+            <div>
+              <div class="summary-label">Discord 24/7 Bot</div>
+              <div class="summary-val" id="statBotStatus" style="color: #22c55e;">Active (Running)</div>
+            </div>
+            <button class="btn btn-secondary" onclick="serviceAction('restart_bot')">Restart Discord Bot</button>
           </div>
-          <div class="stat-card">
-            <div class="stat-label">CSS Plugins Core</div>
-            <div class="stat-val" style="color: #38bdf8;">12 Plugins Loaded</div>
-            <button class="btn btn-sm btn-secondary" style="margin-top: 10px;" onclick="serviceAction('reload_plugins')">Hot Reload All Plugins</button>
+          <div class="service-card">
+            <div>
+              <div class="summary-label">CSS Plugins Core</div>
+              <div class="summary-val" style="color: #ffffff;">Loaded</div>
+            </div>
+            <button class="btn btn-secondary" onclick="serviceAction('reload_plugins')">Reload All Plugins</button>
           </div>
         </div>
 
         <div style="margin-top: 16px;">
-          <div style="font-size: 0.82rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase; margin-bottom: 8px;">Direct Panel Links:</div>
-          <div style="display: flex; gap: 10px; flex-wrap: wrap;">
-            <a href="https://skinz.walliez.xyz" target="_blank" class="btn btn-secondary btn-sm" style="text-decoration: none;">🗡️ Skin & Knife Web Panel</a>
-            <a href="https://mvpz.walliez.xyz" target="_blank" class="btn btn-secondary btn-sm" style="text-decoration: none;">🎵 MVP Anthems Panel</a>
-            <a href="https://skinz.walliez.xyz/connect/" target="_blank" class="btn btn-secondary btn-sm" style="text-decoration: none;">🎮 1-Click Steam Connect</a>
+          <label style="margin-bottom: 8px;">Direct Panel Links</label>
+          <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+            <a href="https://skinz.walliez.xyz" target="_blank" class="btn btn-secondary btn-sm">Skin & Knife Panel</a>
+            <a href="https://mvpz.walliez.xyz" target="_blank" class="btn btn-secondary btn-sm">MVP Anthems Panel</a>
+            <a href="https://skinz.walliez.xyz/connect/" target="_blank" class="btn btn-secondary btn-sm">Steam Connect Page</a>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- Live Terminal Activity Drawer -->
-    <div class="card" style="padding: 16px; margin-bottom: 0;">
+    <!-- Activity Log Terminal Drawer -->
+    <div class="card" style="padding: 14px; margin-bottom: 0;">
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-        <div style="font-size: 0.8rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">💻 Operation Log:</div>
-        <button class="btn btn-sm btn-secondary" style="padding: 2px 8px; font-size: 0.75rem;" onclick="clearLogs()">Clear</button>
+        <div style="font-size: 0.72rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em;">Activity Log</div>
+        <button class="btn btn-sm btn-secondary" style="height: 22px; padding: 0 8px; font-size: 0.68rem;" onclick="clearLogs()">Clear</button>
       </div>
       <div class="terminal-drawer" id="terminalLog">Control Center ready. Connected to 81.181.113.120.</div>
     </div>
@@ -755,7 +910,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
     function parseCs2Colors(text) {
       let html = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-      let currentColor = '#FFFFFF';
       for (const [tag, hex] of Object.entries(CS2_COLORS)) {
         html = html.split(tag).join(`</span><span style="color:${hex};">`);
       }
@@ -766,7 +920,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     let announcementsData = {
       IntervalSeconds: 90,
       RandomOrder: true,
-      Prefix: "{Gold}★ {LightBlue}[Walliez]{Default}",
+      Prefix: "{Gold}[Walliez]{Default}",
       Messages: []
     };
 
@@ -777,11 +931,11 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         announcementsData = await res.json();
         document.getElementById('announcerInterval').value = announcementsData.IntervalSeconds || 90;
         document.getElementById('announcerRandom').value = announcementsData.RandomOrder ? "true" : "false";
-        document.getElementById('announcerPrefix').value = announcementsData.Prefix || "{Gold}★ {LightBlue}[Walliez]{Default}";
+        document.getElementById('announcerPrefix').value = announcementsData.Prefix || "{Gold}[Walliez]{Default}";
         renderAnnouncementsList();
         log('Announcements loaded successfully.');
       } catch (e) {
-        log('Error loading announcements: ' + e);
+        log('[ERROR] Error loading announcements: ' + e);
       }
     }
 
@@ -789,7 +943,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       const container = document.getElementById('announcementsList');
       container.innerHTML = '';
       if (!announcementsData.Messages || announcementsData.Messages.length === 0) {
-        container.innerHTML = '<div style="color: var(--text-muted); font-size: 0.9rem;">No messages currently configured.</div>';
+        container.innerHTML = '<div style="color: var(--text-muted); font-size: 0.8rem;">No messages currently configured.</div>';
         updateChatPreview();
         return;
       }
@@ -798,12 +952,12 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         item.className = 'msg-item';
         item.innerHTML = `
           <div class="msg-text-box">
-            <span style="color:#64748b; font-weight:700; margin-right:8px;">#${idx+1}</span>
+            <span style="color:#71717a; font-weight:700; margin-right:8px;">#${idx+1}</span>
             <span>${msg}</span>
           </div>
           <div class="msg-actions">
-            <button class="btn btn-sm btn-secondary" onclick="editMessagePrompt(${idx})">✏️ Edit</button>
-            <button class="btn btn-sm btn-danger" onclick="deleteMessage(${idx})">🗑️ Delete</button>
+            <button class="btn btn-sm btn-secondary" onclick="editMessagePrompt(${idx})">Edit</button>
+            <button class="btn btn-sm btn-danger" onclick="deleteMessage(${idx})">Delete</button>
           </div>
         `;
         container.appendChild(item);
@@ -862,13 +1016,13 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         });
         const out = await res.json();
         if (out.success) {
-          log('✅ Announcements successfully saved and ServerAnnouncer hot-reloaded via RCON!');
-          alert('Announcements successfully deployed and live on the server!');
+          log('[OK] Announcements saved and ServerAnnouncer hot-reloaded via RCON.');
+          alert('Announcements successfully deployed to the server.');
         } else {
-          log('❌ Error saving announcements: ' + out.error);
+          log('[ERROR] Error saving announcements: ' + out.error);
         }
       } catch (e) {
-        log('❌ Request failed: ' + e);
+        log('[ERROR] Request failed: ' + e);
       }
     }
 
@@ -882,7 +1036,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         updateHostnamePreview();
         log(`Server Hostname: "${data.hostname}"`);
       } catch (e) {
-        log('Error querying hostname: ' + e);
+        log('[ERROR] Error querying hostname: ' + e);
       }
     }
 
@@ -903,13 +1057,13 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         });
         const out = await res.json();
         if (out.success) {
-          log('✅ Hostname updated immediately in live server & server.cfg!');
-          alert('Hostname applied successfully!');
+          log('[OK] Hostname updated immediately in live server & server.cfg.');
+          alert('Hostname applied successfully.');
         } else {
-          log('❌ Error: ' + out.error);
+          log('[ERROR] Error: ' + out.error);
         }
       } catch (e) {
-        log('❌ Request failed: ' + e);
+        log('[ERROR] Request failed: ' + e);
       }
     }
 
@@ -923,7 +1077,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         renderConvars(currentConvars);
         log(`Loaded ${currentConvars.length} convars.`);
       } catch (e) {
-        log('Error loading convars: ' + e);
+        log('[ERROR] Error loading convars: ' + e);
       }
     }
 
@@ -931,14 +1085,16 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       const grid = document.getElementById('convarsGrid');
       grid.innerHTML = '';
       convars.forEach(item => {
-        const card = document.createElement('div');
-        card.className = 'stat-card';
-        card.innerHTML = `
-          <div style="font-weight:700; color:#38bdf8; font-size:0.9rem;">${item.name}</div>
-          <div style="font-size:0.75rem; color:var(--text-muted); margin-bottom:8px;">${item.desc}</div>
-          <input type="text" id="cv_${item.name}" value="${item.value}">
+        const row = document.createElement('div');
+        row.className = 'convar-row';
+        row.innerHTML = `
+          <div class="convar-meta">
+            <div class="convar-name">${item.name}</div>
+            <div class="convar-desc">${item.desc}</div>
+          </div>
+          <input type="text" class="convar-input" id="cv_${item.name}" value="${item.value}">
         `;
-        grid.appendChild(card);
+        grid.appendChild(row);
       });
     }
 
@@ -962,10 +1118,10 @@ HTML_TEMPLATE = """<!DOCTYPE html>
           body: JSON.stringify(updates)
         });
         const out = await res.json();
-        log('✅ Convars applied successfully via RCON!');
-        alert('Convar settings updated live on the server!');
+        log('[OK] Convars applied successfully via RCON.');
+        alert('Convar settings updated live on the server.');
       } catch (e) {
-        log('Error applying convars: ' + e);
+        log('[ERROR] Error applying convars: ' + e);
       }
     }
 
@@ -983,7 +1139,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         log(`Result: ${out.output || out.status}`);
         refreshServices();
       } catch (e) {
-        log('Action error: ' + e);
+        log('[ERROR] Action error: ' + e);
       }
     }
 
@@ -993,19 +1149,19 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         const data = await res.json();
         document.getElementById('headerStatusText').innerText = data.online ? `Online (${data.players}/${data.max_players})` : 'Offline';
         document.getElementById('statCs2Status').innerText = data.online ? `Active (${data.map})` : 'Stopped';
-        document.getElementById('statCs2Status').style.color = data.online ? '#4ade80' : '#ef4444';
+        document.getElementById('statCs2Status').style.color = data.online ? '#22c55e' : '#ef4444';
       } catch (e) {}
     }
 
     async function triggerClientSync() {
-      log('Running 1-click client anthem sync...');
+      log('Running client anthem sync...');
       try {
         const res = await fetch('/api/sync_client', { method: 'POST' });
         const out = await res.json();
         log(out.output || 'Sync completed.');
-        alert('Local CS2 client sync finished!');
+        alert('Local CS2 client sync finished.');
       } catch (e) {
-        log('Sync error: ' + e);
+        log('[ERROR] Sync error: ' + e);
       }
     }
 
@@ -1016,7 +1172,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         const out = await res.json();
         log(out.message || 'Visual MVP Studio launched.');
       } catch (e) {
-        log('Error launching studio: ' + e);
+        log('[ERROR] Error launching studio: ' + e);
       }
     }
 
@@ -1027,9 +1183,9 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         const res = await fetch('/api/rebuild_workshop', { method: 'POST' });
         const out = await res.json();
         log(out.output || 'Rebuild complete.');
-        alert('Workshop Addon rebuilt and deployed to server!');
+        alert('Workshop Addon rebuilt and deployed to server.');
       } catch (e) {
-        log('Error rebuilding addon: ' + e);
+        log('[ERROR] Error rebuilding addon: ' + e);
       }
     }
 
@@ -1040,7 +1196,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         const out = await res.json();
         log(out.message || 'CS2 Tools started.');
       } catch (e) {
-        log('Error starting CS2 tools: ' + e);
+        log('[ERROR] Error starting CS2 tools: ' + e);
       }
     }
 
@@ -1056,9 +1212,9 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       .then(r => r.json())
       .then(d => {
         log(d.output || 'Conversion complete.');
-        alert(d.output || 'Conversion complete!');
+        alert(d.output || 'Conversion complete.');
       })
-      .catch(e => log('Conversion error: ' + e));
+      .catch(e => log('[ERROR] Conversion error: ' + e));
     }
 
     // Initial Load
