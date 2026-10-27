@@ -175,10 +175,10 @@ def rebuild_and_package(audio_inputs=None):
     for display_title, track_key in staged_tracks:
         soundevents_lines.append(f'    "CustomMVP.{track_key}" =')
         soundevents_lines.append("    {")
-        soundevents_lines.append('        type = "csgo_music"')
+        soundevents_lines.append('        type = "csgo_mega"')
         soundevents_lines.append("        volume = 1.000000")
         soundevents_lines.append("        pitch = 1.000000")
-        soundevents_lines.append(f'        vsnd_files = [ "sounds/mvp/{track_key}.vsnd" ]')
+        soundevents_lines.append(f'        vsnd_files_track_01 = "sounds/mvp/{track_key}.vsnd"')
         soundevents_lines.append("    }")
     soundevents_lines.append("}")
     vsndevts_content = "\n".join(soundevents_lines) + "\n"
@@ -323,11 +323,16 @@ def rebuild_and_package(audio_inputs=None):
         print(f" - {display_title} (sounds/mvp/{track_key}.vsnd_c) [10s Mastered]")
     print("=" * 65)
 
-    choice = input("\n[?] Open CS2 Workshop Tools now to submit update to Steam? (Y/n): ").strip().lower()
-    if choice != "n":
-        print("[*] Launching CS2 Workshop Tools...")
-        subprocess.Popen([CS2_EXE, "-tools", "-addon", ADDON_NAME])
+    if "--no-prompt" not in sys.argv:
+        try:
+            choice = input("\n[?] Open CS2 Workshop Tools now to submit update to Steam? (Y/n): ").strip().lower()
+            if choice != "n":
+                print("[*] Launching CS2 Workshop Tools...")
+                subprocess.Popen([CS2_EXE, "-tools", "-addon", ADDON_NAME])
+        except EOFError:
+            pass
 
 if __name__ == "__main__":
-    inputs = sys.argv[1:]
+    inputs = [arg for arg in sys.argv[1:] if arg != "--no-prompt"]
     rebuild_and_package(inputs if inputs else None)
+

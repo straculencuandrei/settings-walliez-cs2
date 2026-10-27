@@ -1,40 +1,44 @@
-# CS2 Server Settings & Custom MVP Workshop Suite
+# CS2 Server Settings, Control Center & Custom MVP Workshop Suite
 
-This repository contains the complete configuration, custom CounterStrikeSharp plugins, and the automated Steam Workshop MVP pipeline developed for the **Walliez CS2 Server**.
-
----
-
-## 📁 Repository Structure
-
-### 1. MVP Studio & Audio Pipeline
-* **`wlz_mvp_studio.py` / `wlzMVP_Studio.bat`**: All-in-one studio tool for adding anthems, batch recompiling, and managing CS2 Workshop Tools.
-* **`export_clean_mp3.py` / `Convert_To_Clean_44k_MP3.bat`**: Audio converter implementing the exact clean MP3 44.1 kHz, 320 kbps CBR, metadata-stripped algorithm with 10.0s trimming and a smooth 1-second fadeout.
-* **`wlzMVP/`**: Complete source files for the Workshop Addon `wlzMVP` (Item ID: `3827657422`), including `soundevents_addon.vsndevts`, `addoninfo.txt`, preview thumbnails, and staged tracks.
-
-### 2. Custom CounterStrikeSharp Plugins
-* **`server-configs/plugins/Custom_MVP_Sounds/`**:
-  * **`Custom_MVP_Sounds.cs`**: Modernized WASD-driven MVP Anthem selection menu (`/mvp`). Features per-tick center HUD rendering (no flickering/popping) and safe networked audio emission via native `EmitSound` (eliminates headless server audio deadlocks and watchdog timeout crashes).
-  * **`MVP_Settings.json`**: Live server track definitions and configurations.
-* **`server-configs/plugins/CustomMenu/`**:
-  * **`CustomMenu.cs`**: WASD-driven `/menu` plugin with emoji-free clean styling and confirmation sub-menus.
-  * **`CustomMenu.json`**: Menu definitions and command bindings.
-
-### 3. Server Engine & Addon Configurations
-* **`server-configs/cfg/multiaddonmanager.cfg`**: MultiAddonManager configuration mounting Workshop Addon `3827657422` for all connecting players.
-* **`SERVER_DOCUMENTATION.md`**: Full documentation of server infrastructure, credentials, file paths, and operations.
-
-### 4. Utilities & Automation (`scratch/`)
-* **`pack_and_deploy_all.py`**: Automated packaging into monolithic VPK and direct SFTP sync to all server workshop locations.
-* **`build_and_deploy_mvp_v3.py`**: Remote compilation of the C# plugin and automated server restart.
+This repository contains the complete configuration, custom CounterStrikeSharp plugins, Discord integration bots, and the unified desktop Control Center for the **Walliez CS2 Server** (`81.181.113.120:27015`).
 
 ---
 
-## 🛠️ Usage Quick Reference
+## ⚡ CS2 Server Control Center (`CS2_Control_Center.bat`)
 
-### Add a New MVP Anthem
-1. Drag and drop any `.mp3` or `.wav` onto **`wlzMVP_Studio.bat`** (or run `python wlz_mvp_studio.py`).
-2. Enter the track display name and optional start time.
-3. The script automatically exports clean 44.1 kHz audio, trims to 10 seconds with fadeout, regenerates KV3 soundevents, invokes Valve's `resourcecompiler.exe`, syncs the dedicated server config, and launches the CS2 Workshop Manager to submit the update.
+The single master control application for managing all server features via a modern, high-speed glassmorphism desktop interface:
 
-### Convert Audio to Clean 44.1 kHz
-Drag and drop any audio file onto **`Convert_To_Clean_44k_MP3.bat`** for a clean, stripped 10-second MP3 export.
+* **📢 Tab 1: In-Game Announcements (`ServerAnnouncer`)**:
+  * Real-time view, add, edit, and delete scheduled chat messages.
+  * Adjust announcement interval (seconds) and rotation mode (random / sequential).
+  * Live **CS2 In-Game Chat Simulator Preview** with real-time color rendering (`{Gold}`, `{LightBlue}`, `{Green}`, `{LightPurple}`, etc.).
+  * 1-Click Save & Deploy directly to the VPS via SFTP + instant RCON reload.
+* **🏷️ Tab 2: Server Name & Hostname**:
+  * Live A2S engine query of the active server name, map, and player counts.
+  * Instant RCON hostname update + permanent update to `server.cfg`.
+  * Live Steam & CS2 server browser card preview.
+* **⚙️ Tab 3: Match Settings & Convars**:
+  * Searchable and customizable competitive match rules (`mp_roundtime_defuse`, `mp_maxrounds`, `mp_freezetime`, `mp_c4timer`, `mp_buytime`, `mp_startmoney`, etc.).
+  * Live RCON execution + permanent sync to `gamemode_competitive_server.cfg`.
+* **🎵 Tab 4: MVP Anthem Studio & Audio Pipeline**:
+  * Launch Visual MVP Web Studio (`add_mvp_ui.py`) with audio trimming & waveform preview.
+  * 1-Click Local Client Sync (`sync_client_anthems.py`) to your local Steam CS2 library.
+  * Audio Converter: Convert any audio to clean 44.1 kHz, 320 kbps CBR MP3.
+  * Rebuild & Deploy Workshop Addon (`prepare_workshop_mvp.py`) to server cache.
+  * Launch Valve CS2 Workshop Tools (`wlzMVP`).
+* **📊 Tab 5: Services & Discord Bot Monitor**:
+  * Live status of `cs2.service` and `cs2-discord-bot.service`.
+  * Safe 1-click server restart and Discord bot restart.
+  * Hot reload all CSS plugins.
+  * Quick links to `skinz.walliez.xyz`, `mvpz.walliez.xyz`, and 1-click connect.
+
+---
+
+## 🛠️ CLI Utilities
+
+* **`edit_announcements.py`**: Standalone interactive terminal tool to edit announcement messages, intervals, prefixes, and deploy live.
+* **`set_server_name.py`**: Command-line tool to query and set hostname via RCON.
+* **`cs2_cfg.py`**: Command-line interactive match convar editor.
+* **`export_clean_mp3.py`**: High-performance audio conversion matching onlineaudioconverter.com algorithm.
+* **`SERVER_DOCUMENTATION.md`**: Complete documentation covering server architecture, Discord bot, plugins, and administration.
+
