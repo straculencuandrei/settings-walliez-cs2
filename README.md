@@ -35,11 +35,12 @@ The single master control application for managing all server features via a mod
 
 ---
 
-## 🛠️ CLI Utilities
+## 🛠️ Architecture & Documentation
 
-* **`edit_announcements.py`**: Standalone interactive terminal tool to edit announcement messages, intervals, prefixes, and deploy live.
-* **`set_server_name.py`**: Command-line tool to query and set hostname via RCON.
-* **`cs2_cfg.py`**: Command-line interactive match convar editor.
-* **`export_clean_mp3.py`**: High-performance audio conversion matching onlineaudioconverter.com algorithm.
-* **`SERVER_DOCUMENTATION.md`**: Complete documentation covering server architecture, Discord bot, plugins, and administration.
+* **`SERVER_DOCUMENTATION.md`**: Complete technical documentation covering server architecture, Discord bot, CounterStrikeSharp plugins, and administration:
+  * **Section 8**: Troubleshooting & Gotchas Cheat Sheet.
+  * **Section 12**: Desktop Control Center Architecture & MVP Studio Post-Mortem.
+  * **Section 13**: Failure Modes, Diagnostic Flowcharts & Disaster Recovery Runbook (diagnostic decision tree, Python string escaping traps, route handler fallthrough, port 5890 conflict resolution, and emergency recovery commands).
+* **`cs2_control_center.py`**: Unified all-in-one desktop GUI backend serving the pitch-black luxury management portal.
+* **`CS2_Control_Center.bat`**: Desktop launcher that auto-starts the Control Center and seamlessly handles daemon reconnection.
 

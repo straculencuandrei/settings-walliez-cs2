@@ -720,3 +720,124 @@ Drag and drop any audio file onto `Convert_To_Clean_44k_MP3.bat`:
   - Wrapped `HTTPServer(("127.0.0.1", 5890), ControlCenterHandler)` in a try-catch for `OSError (WinError 10048)`.
   - If port 5890 is already occupied by a running background daemon or instance, the launcher gracefully connects to the existing instance and opens the UI without crashing.
 
+---
+
+### 13. Failure Modes, Diagnostic Flowcharts & Disaster Recovery Runbook
+
+This section documents every critical failure mode encountered during development and server maintenance, providing exact diagnostic steps, commands, and permanent solutions so that any future administrator or AI agent can resolve them immediately.
+
+#### A. Diagnostic Decision Tree: Is the VPS Down, or is the Web/App Frontend Crashing?
+
+When an administrator reports: *"the app doesn't connect to the VPS again"* or the Control Center is stuck on *"• Checking Server..."* and *"Loading messages..."*:
+
+```mermaid
+graph TD
+    A["Control Center displays 'Checking Server...' indefinitely"] --> B["Open Browser DevTools (F12) -> Console"]
+    B -->|"Uncaught SyntaxError or JS Exception"| C["Client-side JavaScript halted at script parse time.<br/>No network requests were ever dispatched.<br/>VPS IS COMPLETELY HEALTHY."]
+    B -->|"Zero Console Errors, Network Tab shows red /api/status"| D["Test local Python endpoint directly via CLI"]
+    D -->|"curl http://127.0.0.1:5890/api/status"| E{"Does curl return JSON?"}
+    E -->|"Yes: returns valid JSON"| F["Browser cache or CORS issue.<br/>Perform hard refresh (Ctrl+F5)."]
+    E -->|"No: connection refused / error"| G["Check Python terminal / process"]
+    G -->|"WinError 10048 (port in use)"| H["Previous instance running.<br/>Kill python.exe or reboot Control Center."]
+    G -->|"SSH/A2S Timeout in Python logs"| I["VPS Network issue or CS2 crashed.<br/>SSH into 81.181.113.120 and run systemctl status cs2."]
+```
+
+#### B. The Python Template String Escaping Trap (Permanent Prevention)
+- **The Pitfall**: In `cs2_control_center.py`, the entire frontend HTML and JavaScript code is stored inside a Python multiline string (`HTML_TEMPLATE = """ ... """`).
+- **How it Breaks**:
+  - In Python, `\\` inside a triple-quoted string compiles down to a single `\` in the resulting string in memory.
+  - If a JavaScript string split or regex is written as `path.split('\\')`, Python converts it to `path.split('\')` before serving it over HTTP.
+  - To JavaScript, `\'` is an escaped single quotation mark. The JavaScript string literal remains unclosed, triggering a fatal syntax error:
+    `Uncaught SyntaxError: Invalid or unexpected token`
+  - In standard HTML `<script>` execution, an unhandled syntax error causes the browser engine to immediately abort execution of the entire script tag. None of the functions (`initApp`, `refreshServices`, `fetchAnnouncements`, `switchTab`) ever run.
+  - The UI remains permanently frozen in its initial static HTML state (`• Checking Server...`, `Loading messages...`), mimicking a total VPS connection blackout.
+- **The Universal Rule**:
+  - **NEVER** use raw backslashes `\` or `\\` in embedded JavaScript inside Python multiline strings.
+  - Always use `String.fromCharCode(92)` to represent a backslash dynamically at client runtime:
+    ```javascript
+    const parts = cleanPath.split(String.fromCharCode(92)).join('/').split('/');
+    ```
+  - Or normalize file paths to forward slashes `/` on the backend before returning them to the client.
+
+#### C. HTTP Route Handler Fallthrough & Corrupted JSON (SyntaxError)
+- **The Pitfall**:
+  - In Python's standard `http.server.BaseHTTPRequestHandler` implementation:
+    ```python
+    if self.path == "/api/launch_workshop_tools":
+        ...
+        self.send_json({"success": True, "message": "Launched"})
+        # MISSING return!
+    
+    self.send_response(404)
+    self.end_headers()
+    self.wfile.write(b'{"error": "Not found"}')
+    ```
+  - When `return` is omitted, the request handler executes the route logic and sends the JSON response, then continues down the method and hits the fallback 404 block.
+  - It writes a secondary HTTP response header and body onto the very same active HTTP socket connection.
+  - The browser reads the initial JSON payload (e.g. 60 bytes), but when parsing with `res.json()`, it encounters the trailing characters of the second response and throws:
+    `SyntaxError: Unexpected non-whitespace character after JSON at position 60 (line 1 column 61)`
+- **The Universal Rule**:
+  - **EVERY** route handler in `do_GET()` and `do_POST()` must terminate with an explicit `return` statement immediately after calling `self.send_json(...)` or sending a response.
+
+#### D. Socket Port Conflict Handling (`[WinError 10048] Address already in use`)
+- **The Problem**: If a user launches `CS2_Control_Center.bat` while a background daemon or previous instance of `cs2_control_center.py` is already running on port 5890, Python throws `OSError: [WinError 10048] Only one usage of each socket address (protocol/network address/port) is normally permitted`.
+- **The Permanent Architecture**:
+  - The server startup code in `cs2_control_center.py` is wrapped in a resilient try/except block:
+    ```python
+    try:
+        server = ThreadingHTTPServer(("127.0.0.1", 5890), ControlCenterHandler)
+        print("[*] Control Center running at http://127.0.0.1:5890/")
+        webbrowser.open("http://127.0.0.1:5890/")
+        server.serve_forever()
+    except OSError as e:
+        if e.winerror == 10048:
+            print("[*] Port 5890 already occupied by active daemon. Opening browser...")
+            webbrowser.open("http://127.0.0.1:5890/")
+            sys.exit(0)
+    ```
+  - If an administrator needs to force kill any hanging python processes on Windows:
+    ```powershell
+    # Find process on port 5890
+    Get-NetTCPConnection -LocalPort 5890 -ErrorAction SilentlyContinue | Select-Object OwningProcess
+    # Kill the process
+    Stop-Process -Id <PID> -Force
+    ```
+
+#### E. Browser Audio Playback: CORS Restrictions & HTTP 206 Partial Content
+- **The Problem**:
+  - Directly passing local file paths (e.g. `file:///C:/path/sound.mp3`) to HTML `<audio>` elements fails in Chromium and WebView due to local filesystem origin security policies (`Not allowed to load local resource`).
+  - Serving local audio files via static HTTP without byte-range headers prevents audio scrubbing / seeking in the browser and causes playback failure in modern media engines.
+- **The Solution**:
+  - Route all audio previews through the dedicated backend endpoint: `GET /api/audio_stream?path=<escaped_path>`.
+  - The endpoint parses the client's `Range: bytes=start-end` request header and responds with `HTTP/1.1 206 Partial Content`, `Accept-Ranges: bytes`, and the exact byte slice requested.
+  - In JavaScript, setting `audioElement.src = '/api/audio_stream?path=...'` enables seamless seeking, waveform scrubbing, and zero-stutter playback.
+
+#### F. Step-by-Step Multi-Track MVP Pipeline Runbook
+To add one or multiple custom MVP anthems to the Walliez CS2 server:
+1. Double-click `CS2_Control_Center.bat`.
+2. Navigate to the **MVP Anthems** tab.
+3. Click `+ Select Audio Files (Multi-Select)` and pick one or more audio files (`.mp3`, `.wav`, `.ogg`, `.flac`, `.m4a`).
+4. For each track card in the queue:
+   - Edit the **Display Name** (e.g., `Song Name (Radio Edit)`).
+   - Use the **Waveform Scrubber** or enter **Start Offset** (seconds or `mm:ss`) to choose the exact chorus start.
+   - Adjust the **Duration Slider** (`5.0s` to `15.0s`, default `10.0s`).
+   - Click `▶ Preview MVP Cut` to audition the exact 1-second volume fadeout and check the HUD banner preview.
+5. Click **`Convert & Deploy All to Server (X Tracks)`**.
+   - The system executes all 7 pipeline steps sequentially and streams live progress logs.
+6. Once the pipeline finishes, click **`CS2 Tools`** (or launch from the action banner).
+   - In Workshop Manager, select Addon `wlzMVP` (Item ID `3827657422`).
+   - Click **Submit / Publish Update** to upload the compiled VPK to Steam.
+7. Done! Players downloading the workshop update will automatically hear the new anthems when awarded MVP in matches.
+
+#### G. VPS Emergency Recovery Quick Reference
+| Service / Component | Diagnostic Command | Recovery Command |
+|---|---|---|
+| **CS2 Game Server** | `systemctl status cs2` | `systemctl restart cs2` |
+| **CS2 Crash Monitor** | `systemctl status cs2-crash-monitor` | `systemctl restart cs2-crash-monitor` |
+| **Discord Bot** | `systemctl status cs2-discord-bot` | `systemctl restart cs2-discord-bot` |
+| **CSS Plugins** | `rcon css_plugins list` | `rcon css_plugins reload` |
+| **Live Game Journal** | `journalctl -u cs2 -f` | N/A |
+| **Latest Crash Dump** | `cat /home/csgoserver/LAST_CRASH.txt` | N/A |
+| **MultiAddonManager VPK** | `ls -la /home/csgoserver/server-cs2/game/csgo/addons/multiaddonmanager/3827657422/` | Check VPK size and permissions |
+| **MVP Settings JSON** | `cat /home/csgoserver/server-cs2/game/csgo/addons/counterstrikesharp/plugins/Custom_MVP_Sounds/MVP_Settings.json` | Re-deploy via Control Center |
+
