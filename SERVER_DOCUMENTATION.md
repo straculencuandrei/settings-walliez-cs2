@@ -841,3 +841,15 @@ To add one or multiple custom MVP anthems to the Walliez CS2 server:
 | **MultiAddonManager VPK** | `ls -la /home/csgoserver/server-cs2/game/csgo/addons/multiaddonmanager/3827657422/` | Check VPK size and permissions |
 | **MVP Settings JSON** | `cat /home/csgoserver/server-cs2/game/csgo/addons/counterstrikesharp/plugins/Custom_MVP_Sounds/MVP_Settings.json` | Re-deploy via Control Center |
 
+#### H. File Picker & Audio Preview Volume Slider Architecture
+- **Preview Volume Slider & Mute Toggle**:
+  - Embedded pitch-black minimalist volume slider directly in the audio deck transport bar (`.mvp-volume-control`, range `0%` to `100%`).
+  - Persists the administrator's preferred preview volume in `localStorage ('cs2_mvp_preview_vol')` across sessions.
+  - Dynamically scales volume during full playback and adjusts the 1.0s round-end fadeout profile (`previewMvpCut`).
+  - Real-time scrubbing integration: dragging the start point scrubber or clicking presets while audio is playing immediately seeks the audio stream to audition that exact chorus cue without needing to restart playback.
+- **Resilient Multi-Threaded Windows File Dialog**:
+  - Python HTTP server handles requests inside worker threads where COM / OLE apartment threading conflicts can occur with Tkinter.
+  - Implemented detached subprocess execution (`sys.executable -c ...`) running the file picker on a clean, dedicated main thread with `-topmost` focus.
+  - Added an HTML `<input type="file">` client fallback: if the backend server is temporarily offline, the browser's own file selection dialog triggers automatically, preventing unhandled `TypeError: Failed to fetch` toasts.
+
+

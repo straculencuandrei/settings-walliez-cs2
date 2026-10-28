@@ -222,6 +222,27 @@ def format_start_time(st):
         return "00:00:00"
 
 def browse_audio_files(multiple=True):
+    # Method 1: Detached python process with dedicated Tkinter main loop (prevents COM/thread apartment deadlocks)
+    try:
+        sub_code = (
+            "import tkinter as tk, os\n"
+            "from tkinter import filedialog\n"
+            "r = tk.Tk()\n"
+            "r.withdraw()\n"
+            "r.attributes('-topmost', True)\n"
+            f"paths = filedialog.askopenfilenames(title='Select Audio File(s) for MVP Anthems', filetypes=[('Audio Files', '*.mp3 *.wav *.ogg *.flac *.m4a *.aac *.wma'), ('All Files', '*.*')]) if {multiple} else [filedialog.askopenfilename(title='Select Audio File for MVP Anthem', filetypes=[('Audio Files', '*.mp3 *.wav *.ogg *.flac *.m4a *.aac *.wma'), ('All Files', '*.*')])]\n"
+            "r.destroy()\n"
+            "for p in paths:\n"
+            "    if p and p.strip(): print(os.path.normpath(p.strip()))\n"
+        )
+        res = subprocess.run([sys.executable, "-c", sub_code], capture_output=True, text=True, timeout=120)
+        if res.returncode == 0 and res.stdout.strip():
+            lines = [l.strip() for l in res.stdout.strip().splitlines() if l.strip()]
+            return lines if multiple else lines[:1]
+    except Exception as e:
+        print(f"[!] Detached file dialog error: {e}")
+
+    # Method 2: Direct Tkinter fallback
     try:
         import tkinter as tk
         from tkinter import filedialog
@@ -237,7 +258,7 @@ def browse_audio_files(multiple=True):
                 ]
             )
             root.destroy()
-            return list(paths) if paths else []
+            return [os.path.normpath(p) for p in paths if p] if paths else []
         else:
             path = filedialog.askopenfilename(
                 title="Select Audio File for MVP Anthem",
@@ -247,8 +268,9 @@ def browse_audio_files(multiple=True):
                 ]
             )
             root.destroy()
-            return [path] if path else []
-    except Exception:
+            return [os.path.normpath(path)] if path else []
+    except Exception as e:
+        print(f"[!] Tkinter fallback error: {e}")
         return []
 
 def browse_audio_file():
@@ -1830,6 +1852,62 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       border-radius: 50%;
       background: #22c55e;
       cursor: pointer;
+    }
+    .mvp-volume-control {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      background: #050505;
+      border: 1px solid #1a1a1a;
+      padding: 4px 10px;
+      border-radius: 4px;
+      transition: border-color 0.15s ease;
+    }
+    .mvp-volume-control:hover {
+      border-color: #2a2a2a;
+    }
+    .mvp-vol-btn {
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      color: var(--text-muted);
+      transition: color 0.15s;
+    }
+    .mvp-vol-btn:hover {
+      color: #38bdf8;
+    }
+    .mvp-vol-slider {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 68px;
+      height: 4px;
+      background: #222;
+      border-radius: 2px;
+      outline: none;
+      cursor: pointer;
+      margin: 0;
+    }
+    .mvp-vol-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: #38bdf8;
+      box-shadow: 0 0 4px rgba(56, 189, 248, 0.5);
+      cursor: pointer;
+      transition: transform 0.1s ease;
+    }
+    .mvp-vol-slider::-webkit-slider-thumb:hover {
+      transform: scale(1.2);
+    }
+    .mvp-vol-val {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.72rem;
+      font-weight: 600;
+      color: #38bdf8;
+      min-width: 30px;
+      text-align: right;
     }
     .btn-batch-deploy {
       background: #22c55e !important;
@@ -3485,6 +3563,8 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         start_seconds: 0,
         duration: 10.0,
         audio_duration: 180.0, // default until loaded
+        volume: parseFloat(localStorage.getItem('cs2_mvp_preview_vol') || '0.8'),
+        previous_volume: 0.8,
         audio_element: null,
         is_playing: false,
         is_preview_cut: false,
@@ -3507,6 +3587,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     async function browseMvpMultipleFiles() {
       try {
         const res = await fetch('/api/browse_audio_files', { method: 'POST' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         if (data.paths && data.paths.length > 0) {
           data.paths.forEach(p => {
@@ -3514,13 +3595,36 @@ HTML_TEMPLATE = """<!DOCTYPE html>
           });
           renderMvpQueue();
           showToast(`Added ${data.paths.length} audio file(s) to MVP queue.`, 'info');
+          return;
         } else if (data.path) {
           mvpQueue.push(createQueueTrack(data.path));
           renderMvpQueue();
           showToast('Added 1 audio file to MVP queue.', 'info');
+          return;
         }
       } catch (e) {
-        showToast('Error opening audio file picker: ' + e, 'error');
+        // Fallback to browser file input if local Python server is unreachable or offline
+        let fileInput = document.getElementById('mvpBrowserFallbackInput');
+        if (!fileInput) {
+          fileInput = document.createElement('input');
+          fileInput.id = 'mvpBrowserFallbackInput';
+          fileInput.type = 'file';
+          fileInput.multiple = true;
+          fileInput.accept = '.mp3,.wav,.ogg,.flac,.m4a,.aac,.wma';
+          fileInput.style.display = 'none';
+          fileInput.onchange = (evt) => {
+            const files = Array.from(evt.target.files || []);
+            if (files.length > 0) {
+              files.forEach(f => {
+                mvpQueue.push(createQueueTrack(f.name));
+              });
+              renderMvpQueue();
+              showToast(`Added ${files.length} audio track(s). Verify file path on Windows.`, 'info');
+            }
+          };
+          document.body.appendChild(fileInput);
+        }
+        fileInput.click();
       }
     }
 
@@ -3586,8 +3690,73 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         slider.value = track.start_seconds;
       }
 
+      // Seek audio element directly if currently playing so user hears the scrubbed position
+      if (track.is_playing && track.audio_element) {
+        try {
+          track.audio_element.currentTime = track.start_seconds;
+        } catch (e) {}
+      }
+
       updateWaveformOverlay(track);
       updateTimeReadout(track);
+    }
+
+    function updateTrackVolume(id, val, syncAll = true) {
+      const track = mvpQueue.find(t => t.id === id);
+      if (!track) return;
+      const numVal = Math.max(0, Math.min(100, parseInt(val) || 0));
+      track.volume = numVal / 100.0;
+      if (track.volume > 0) {
+        track.previous_volume = track.volume;
+      }
+
+      const valEl = document.getElementById(`volVal-${id}`);
+      if (valEl) valEl.innerText = `${numVal}%`;
+
+      const slider = document.getElementById(`volSlider-${id}`);
+      if (slider) {
+        slider.value = numVal;
+        slider.title = `Volume: ${numVal}%`;
+      }
+
+      if (track.audio_element && track.is_playing && !track.is_preview_cut) {
+        try {
+          track.audio_element.volume = track.volume;
+        } catch (e) {}
+      }
+
+      try {
+        localStorage.setItem('cs2_mvp_preview_vol', track.volume.toString());
+      } catch (e) {}
+
+      // Keep user's preferred listening level synced across all queued items
+      if (syncAll) {
+        mvpQueue.forEach(t => {
+          if (t.id !== id) {
+            t.volume = track.volume;
+            if (t.volume > 0) t.previous_volume = t.volume;
+            const otherSlider = document.getElementById(`volSlider-${t.id}`);
+            if (otherSlider) {
+              otherSlider.value = numVal;
+              otherSlider.title = `Volume: ${numVal}%`;
+            }
+            const otherValEl = document.getElementById(`volVal-${t.id}`);
+            if (otherValEl) otherValEl.innerText = `${numVal}%`;
+          }
+        });
+      }
+    }
+
+    function toggleTrackMute(id) {
+      const track = mvpQueue.find(t => t.id === id);
+      if (!track) return;
+      if (track.volume > 0) {
+        track.previous_volume = track.volume;
+        updateTrackVolume(id, 0);
+      } else {
+        const restore = Math.round((track.previous_volume || 0.8) * 100);
+        updateTrackVolume(id, restore);
+      }
     }
 
     function setTrackStartPreset(id, presetStr) {
@@ -3711,7 +3880,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
       try {
         track.audio_element.currentTime = track.start_seconds;
-        track.audio_element.volume = 0.85;
+        track.audio_element.volume = track.volume !== undefined ? track.volume : 0.8;
         track.audio_element.play().then(() => {
           track.is_playing = true;
           track.is_preview_cut = false;
@@ -3738,7 +3907,8 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
       try {
         track.audio_element.currentTime = track.start_seconds;
-        track.audio_element.volume = 0.85;
+        const baseVol = track.volume !== undefined ? track.volume : 0.8;
+        track.audio_element.volume = baseVol;
         track.audio_element.play().then(() => {
           track.is_playing = true;
           track.is_preview_cut = true;
@@ -3753,9 +3923,11 @@ HTML_TEMPLATE = """<!DOCTYPE html>
           // Fadeout timer
           setTimeout(() => {
             if (activeAudioTrackId === trackId && track.is_playing && track.audio_element) {
-              let vol = 0.85;
+              let vol = baseVol;
+              const fadeSteps = 10;
+              const volStep = baseVol / fadeSteps;
               const stepInterval = setInterval(() => {
-                vol -= 0.085;
+                vol -= volStep;
                 if (vol <= 0 || !track.is_playing) {
                   clearInterval(stepInterval);
                 } else if (track.audio_element) {
@@ -3901,6 +4073,17 @@ HTML_TEMPLATE = """<!DOCTYPE html>
               <button class="mvp-btn-playback" style="background:#111; border-color:#22c55e; color:#22c55e;" onclick="previewMvpCut('${track.id}')">
                 ▶ Preview MVP Cut
               </button>
+
+              <!-- Minimal Luxury Volume Slider -->
+              <div class="mvp-volume-control" title="Preview playback volume">
+                <span class="mvp-vol-btn" onclick="toggleTrackMute('${track.id}')" title="Click to mute/unmute">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path><path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path></svg>
+                </span>
+                <input type="range" class="mvp-vol-slider" id="volSlider-${track.id}" min="0" max="100" step="1"
+                       value="${Math.round((track.volume !== undefined ? track.volume : 0.8) * 100)}"
+                       oninput="updateTrackVolume('${track.id}', this.value)">
+                <span class="mvp-vol-val" id="volVal-${track.id}">${Math.round((track.volume !== undefined ? track.volume : 0.8) * 100)}%</span>
+              </div>
             </div>
 
             <!-- Start Time Input & Presets -->
@@ -3948,12 +4131,29 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     async function browseTrackAudioPath(trackId) {
       try {
         const res = await fetch('/api/browse_audio_file', { method: 'POST' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         if (data.path) {
           updateTrackField(trackId, 'audio_path', data.path);
+          return;
         }
       } catch (e) {
-        showToast('Error selecting audio file: ' + e, 'error');
+        let fileInput = document.getElementById('mvpTrackAudioInput-' + trackId);
+        if (!fileInput) {
+          fileInput = document.createElement('input');
+          fileInput.id = 'mvpTrackAudioInput-' + trackId;
+          fileInput.type = 'file';
+          fileInput.accept = '.mp3,.wav,.ogg,.flac,.m4a,.aac,.wma';
+          fileInput.style.display = 'none';
+          fileInput.onchange = (evt) => {
+            const file = (evt.target.files || [])[0];
+            if (file) {
+              updateTrackField(trackId, 'audio_path', file.name);
+            }
+          };
+          document.body.appendChild(fileInput);
+        }
+        fileInput.click();
       }
     }
 
@@ -4628,25 +4828,29 @@ def main():
     print("[*] Launching native standalone application window...")
 
     launched_standalone = False
-    try:
-        import webview
-        window = webview.create_window(
-            'CS2 Server Control Center',
-            url,
-            width=1180,
-            height=860,
-            min_size=(900, 600),
-            background_color='#000000'
-        )
-        launched_standalone = True
-        webview.start()
-    except Exception as e:
-        print(f"[!] Native window error: {e}")
-        launched_standalone = False
+    if "--daemon" not in sys.argv and "--server-only" not in sys.argv and "--no-gui" not in sys.argv:
+        try:
+            import webview
+            window = webview.create_window(
+                'CS2 Server Control Center',
+                url,
+                width=1180,
+                height=860,
+                min_size=(900, 600),
+                background_color='#000000'
+            )
+            launched_standalone = True
+            webview.start()
+        except Exception as e:
+            print(f"[!] Native window error: {e}")
+            launched_standalone = False
 
     if not launched_standalone:
-        open_app_window(url)
-        print("[*] Standalone GUI unavailable. Opened browser fallback.")
+        if "--daemon" not in sys.argv and "--server-only" not in sys.argv:
+            open_app_window(url)
+            print("[*] Standalone GUI unavailable. Opened browser fallback.")
+        else:
+            print(f"[*] Background server daemon active at {url}")
         print("[*] Press Ctrl+C in this terminal window to stop the server.")
         try:
             while True:
@@ -4654,7 +4858,11 @@ def main():
         except KeyboardInterrupt:
             pass
 
-    server.shutdown()
+    if server:
+        try:
+            server.shutdown()
+        except Exception:
+            pass
     print("\n[*] Control Center closed gracefully.")
 
 if __name__ == "__main__":
