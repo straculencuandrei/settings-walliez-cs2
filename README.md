@@ -20,12 +20,13 @@ The single master control application for managing all server features via a mod
 * **⚙️ Tab 3: Match Settings & Convars**:
   * Searchable and customizable competitive match rules (`mp_roundtime_defuse`, `mp_maxrounds`, `mp_freezetime`, `mp_c4timer`, `mp_buytime`, `mp_startmoney`, etc.).
   * Live RCON execution + permanent sync to `gamemode_competitive_server.cfg`.
-* **🎵 Tab 4: MVP Anthem Studio & Audio Pipeline**:
-  * Launch Visual MVP Web Studio (`add_mvp_ui.py`) with audio trimming & waveform preview.
-  * 1-Click Local Client Sync (`sync_client_anthems.py`) to your local Steam CS2 library.
-  * Audio Converter: Convert any audio to clean 44.1 kHz, 320 kbps CBR MP3.
-  * Rebuild & Deploy Workshop Addon (`prepare_workshop_mvp.py`) to server cache.
-  * Launch Valve CS2 Workshop Tools (`wlzMVP`).
+* **🎵 Tab 4: MVP Anthem Studio & Batch Workshop Pipeline**:
+  * **Interactive Vinyl Deck & Waveform Scrubber**: Modern pitch-black luxury player with rotating vinyl disc, in-game HUD banner preview (`★ doggg is MVP of the Round!`), and interactive start-point waveform seeking.
+  * **Configurable Anthem Durations (5.0s - 15.0s)**: Slider per track with dynamic 1.0s audio volume fadeout (`afade=t=out`) and live visual cut region highlight.
+  * **Multi-Track Batch Queue**: Add multiple audio tracks via native file dialog (`+ Select Audio Files`) or manually, configuring metadata and cut windows simultaneously.
+  * **1-Click Unified Batch Pipeline (`Convert & Deploy All to Server`)**: Processes all queued anthems in one run: trims & normalizes audio, generates KV3 definitions, compiles with Valve `resourcecompiler.exe`, updates VPS `MVP_Settings.json`, builds Valve VPK cache, and synchronizes to local CS2 client directories.
+  * **Bug-Free CS2 Workshop Tools Integration**: Cleanly launches `cs2.exe -tools -addon wlzMVP` to publish compiled addons directly to Steam Workshop Item `3827657422`.
+  * **Active Server Anthems Table**: View, audit durations, and manage registered server soundevents.
 * **📊 Tab 5: Services & Discord Bot Monitor**:
   * Live status of `cs2.service` and `cs2-discord-bot.service`.
   * Safe 1-click server restart and Discord bot restart.

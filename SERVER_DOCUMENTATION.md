@@ -427,6 +427,9 @@ Drag and drop any audio file onto `Convert_To_Clean_44k_MP3.bat`:
 | **Resource compiler fails with "extraneous tokens"** | Syntax error in `soundevents_addon.vsndevts` KV3 format (missing braces or unquoted keys) | Use `wlz_mvp_studio.py` which formats KV3 soundevents blocks validly. |
 | **Players can't hear custom workshop anthem / client crashes on preview** | Invoking `player.EmitSound("CustomMVP...")` triggers Source 2 `CSosOperatorConvar` query on deprecated CS:GO convars (`snd_musicvolume_armsrace`, etc.), crashing `cs2.exe`. | In `Custom_MVP_Sounds.cs`, execute direct compiled audio playback via `player.ExecuteClientCommand($"play {soundPath}")` with `sounds/mvp/{track}.vsnd_c`. This plays the compiled audio directly from the mounted MultiAddonManager workshop VPK, completely bypassing the Source 2 sound operator system and eliminating convar errors. |
 | **Player weapon switch locked after choosing skin** | `AddEntityIOEvent("Kill")` left dangling handles in `CCSPlayer_WeaponServices.m_hMyWeapons` | Never call `Kill` on player weapon entities; use `AcceptInput("ChangeSubclass")` and dynamic attribute updates. |
+| **`Error starting tools: SyntaxError: Unexpected non-whitespace character after JSON at position 60`** | `if self.path == "/api/launch_workshop_tools":` in Python `do_POST` lacked a `return` statement. Execution fell through to `self.send_response(404)`, appending `{"error": "Not found"}` immediately after the 60-byte JSON response. | Always ensure every route handler in `do_POST` terminates with `return` after `self.send_json(...)`. |
+| **Control Center stuck on "Checking Server..." / "Loading messages..." / tabs do not switch** | Unescaped backslashes in Python multiline strings unescaped to `\` in client JavaScript (e.g. `split('\')`), triggering `Uncaught SyntaxError: Invalid or unexpected token` and halting script execution before `initApp()` or `switchTab()` could run. Additionally, `switchTab` called `event.target` without validating that `event` exists. | Use `String.fromCharCode(92)` to represent backslashes in client scripts embedded in Python string literals. Implement defensive `switchTab(tabId, btn)` that falls back to `document.querySelector` when called programmatically. |
+| **MVP anthem cutoff / wrong duration** | MVP tracks hardcoded to 10.0 seconds | Use the Control Center MVP Studio slider to choose custom durations from 5.0s to 15.0s. The pipeline auto-calculates dynamic 1s volume fadeout (`afade=t=out:st={duration-1}:d=1`) and sets `Message_Center_Bottom_InSecs` in `MVP_Settings.json`. |
 
 ---
 
@@ -536,10 +539,184 @@ Drag and drop any audio file onto `Convert_To_Clean_44k_MP3.bat`:
      mp_endmatch_votenextleveltime 20
      ```
 
+#### H. Client Prediction Desyncs, Clock Drift Slams, Entity Slot Re-use & Framerate Spikes
+- **Symptoms Observed in Client Console**:
+  ```text
+  [Client] Last server executed command is 4187 on tick 82651. Duplicating command 4185 2x to catch up. New outgoing command is 4187
+  [Client] server acknowledged to slot 3 client only predicted into 2 slots, full repredict will occur
+  [Client] CL: Forcing ExecuteQueuedOperations due to entity slot re-use (109 weapon_c4)
+  [CL CommandQueue] CQ: Server set re-sync at cmd 5042
+  chicken at (0.000, 0.000, 0.000) has no model name!
+  [Client] CL: Forcing ExecuteQueuedOperations due to entity slot re-use (109 basemodelentity)
+  [Prediction] Shutdown prediction for player slot 0.
+  [Client] Current tick is 102746, but we have received a message for tick 102751.
+  [Client] Slamming client tick to server tick. abs( server tick 102751 - client tick 102739 = 12 ) > ( cl_clockdrift_max_ticks 3 + sim ticks 7 = 10 )
+  Excessive frame time of 137.55ms clamped. Acting as if the frame only took 100.00ms. (Last amnesty was 'FreezePeriod', 0.14s ago)
+  Framerate spike report: FrameTotal: 137.56ms, ClientSimulateTick 68.26ms (49.62%)
+  ```
+
+- **Root Cause Analysis**:
+  1. **Destructive Weapon Lifecycle on Player Spawn (`RefreshWeapons`)**:
+     - On player spawn at round start, `WeaponPaints` invoked `RefreshWeapons(player, force: true)`.
+     - `RefreshWeapons` detected that newly spawned weapons (knife, pistol) had not yet finished initializing dynamic paint attributes.
+     - It immediately called `pawn.RemovePlayerItem(wep)` and `wep.Remove()` on the player's newly spawned weapons, freeing entity slots (e.g. slot 109).
+     - When a Terrorist's knife was removed, CS2 auto-equipped `weapon_c4`. 150ms later, `RefreshWeapons` called `player.GiveNamedItem(...)` to recreate weapons and forced `player.ExecuteClientCommand("slot3")`.
+     - This rapid destruction and recreation caused entity index 109 to be recycled for `basemodelentity` while the client still had unapplied prediction operations in flight for `weapon_c4`, forcing the client to dump its queued operations (`CL: Forcing ExecuteQueuedOperations due to entity slot re-use`), shut down player prediction (`Shutdown prediction for player slot 0`), and perform cascading repredicts (`server acknowledged to slot X client only predicted into Y slots, full repredict will occur`).
+  2. **Client Command Queue Injection (`lastinv`)**:
+     - `GivePlayerGloves` executed `player.ExecuteClientCommand("lastinv")` unconditionally on every spawn even when players had no custom gloves configured, and executed it again 80ms later alongside bodygroup toggles.
+     - Injecting client commands out-of-band forced the client's command queue to resynchronize (`[CL CommandQueue] CQ: Server set re-sync at cmd ...`).
+  3. **Overly Tight Server Clock Clamping (`sv_clockcorrection_msecs 30`)**:
+     - The server default `sv_clockcorrection_msecs 30` only allowed ~1.9 ticks (30ms) of clock drift.
+     - Any tiny round-transition frame spike caused the difference `abs(server tick - client tick)` to exceed 10 ticks, forcing the client engine to hard-snap ("slam") its clock forward.
+     - To catch up 12 ticks in a single render frame, the client executed `ClientSimulateTick` 12 times back-to-back (`68.26ms`), resulting in the `137.56ms` framerate clamp and visible stutter.
+  4. **Orphan Chicken Entities at World Origin**:
+     - The engine/map spawned orphan `chicken` entities at `(0.000, 0.000, 0.000)` without precached models, generating warning logs on every round reset.
+
+- **Fixes Applied**:
+  1. **Eliminated Destructive Weapon Deletion on Spawn**:
+     - In `WeaponPaints.cs`, modified `OnPlayerSpawn` to only give cosmetic kits (`GivePlayerMusicKit`, `GivePlayerAgent`, `GivePlayerGloves`, `GivePlayerPin`) without calling `RefreshWeapons`.
+     - Weapons spawned at round start are now natively skinned in-place by `OnEntityCreated` via `GivePlayerWeaponSkin` (including `SubclassChange` for custom knives) without removing entities or modifying inventory slots.
+     - In `RefreshWeapons`, modified gun handling so mid-round gun skin updates apply in-place without removing gun entities.
+  2. **Cleaned Up `GivePlayerGloves`**:
+     - Added early exit guards: if the player has no custom gloves configured or is already wearing the target glove item index, `GivePlayerGloves` returns immediately.
+     - Eliminated blind `lastinv` command executions and redundant bodygroup toggles on spawn.
+  3. **Auto-Clean Orphan Chicken Entities**:
+     - Added an entity filter in `OnEntityCreated`: if `entity.DesignerName == "chicken"`, it schedules immediate entity removal on the next frame before it can replicate without a model.
+  4. **Optimized Network & Clock Convars in `server.cfg`**:
+     - `sv_clockcorrection_msecs 60`: Widens player tickbase clock correction tolerance to 60ms (4 ticks) to eliminate premature clock slams during round transitions.
+     - `sv_parallel_sendsnapshot 1`: Synchronizes snapshot delivery to tick boundaries to prevent out-of-order packet bursts.
+     - `sv_minrate 128000`: Guarantees modern broadband bandwidth per client.
+     - `sv_client_min_interp_ratio 1`: Ensures clients maintain at least 1 tick of prediction buffering to smooth over network jitter.
 
 
+### 11. MVP Audio Preview Streaming Fix (`mvpz.walliez.xyz`)
+- **Reported Issue**:
+  - Clicking "Preview" on the MVP Atelier website (`mvpz.walliez.xyz`) failed with UI toast: `"Unable to stream audio preview."`.
+  - Converted anthems worked properly in-game via custom sound events, but could not be played or previewed in web browsers.
 
+- **Root Cause Analysis**:
+  1. **Binary Container vs Audio Format Mismatch (`resolve_mvp_sound_file`)**:
+     - When sound effects are converted for CS2, Valve compiles them into `.vsnd_c` binary containers. For WAV files, `.vsnd_c` contains uncompressed/ADPCM PCM sound data without MPEG frames.
+     - In `imports/database.php`, `resolve_mvp_sound_file` checked candidate extensions in the order: original path (`.vsnd_c`), then `.mp3`, then `.wav`.
+     - Because `tacerea_ma_ajuta_mastered.vsnd_c` existed, it was chosen instead of `tacerea_ma_ajuta_mastered.mp3`.
+     - `pages/audio.php` ran a fallback search looking for byte sequence `\xff\xfb` in the raw binary, sliced out 1.76MB of non-audio data, cached it, and served it with `Content-Type: audio/mpeg`. Modern browsers rejected the invalid stream with `MEDIA_ERR_DECODE` / `MEDIA_ERR_SRC_NOT_SUPPORTED`.
+  2. **PHP Session Blocking on HTTP Audio Stream**:
+     - `index.php` called `session_start()` on all requests, which placed an exclusive flock on the PHP session file.
+     - `audio.php` streamed binary data in chunks without calling `session_write_close()`.
+     - While audio was streaming or buffered by the browser, subsequent HTTP requests (range probes, track skips, or API calls) were held indefinitely until the connection closed.
+     - `session_start()` also injected `Pragma: no-cache` and `Expires: Thu, 19 Nov 1981 08:52:00 GMT` into audio responses.
+  3. **Audio Element Playback Abort Race Condition (`mvp-atelier.js`)**:
+     - `loadTrackIntoDeck` called `audioEl.src = audioUrl; audioEl.load();` immediately followed by `audioEl.play()`.
+     - In Chromium/WebKit, invoking `.load()` synchronously right before `.play()` rejects the pending play promise with `AbortError: The play() request was interrupted by a new load request.`.
+     - Any play rejection triggered `showToast('Unable to stream audio preview.', 'error')`.
+  4. **Unnecessary CORS Restriction on Same-Origin Audio**:
+     - `<audio id="mvpAudioElement" crossorigin="anonymous">` was set in `pages/mvps.php`.
+     - Because the application is same-origin, `crossorigin="anonymous"` caused Chromium to perform unnecessary anonymous CORS validations on `206 Partial Content` range responses and conflict with session cookies.
 
+- **Fixes Applied**:
+  1. **Audio-First File Resolution (`database.php`)**:
+     - Updated `resolve_mvp_sound_file()` to prioritize streamable web audio formats (`.mp3`, `.wav`) and case-insensitive file matching across all sound directories before falling back to compiled `.vsnd_c` resources.
+  2. **Non-Blocking Streaming & Clean Cache Headers (`audio.php`)**:
+     - Added immediate `session_write_close()` at the top of `audio.php` to prevent PHP session deadlock.
+     - Stripped `Pragma` and `Expires` headers so browsers can cache and stream partial content cleanly via `Range: bytes` (HTTP 206).
+     - Flushed corrupted `.vsnd_c` slices from `/var/www/mvpz.walliez.xyz/cache/audio/`.
+     - Exported standalone clean MP3 files for all catalog tracks into `/home/csgoserver/server-cs2/game/csgo/sounds/mvp/`.
+  3. **Robust Audio Deck Transport (`mvp-atelier.js`)**:
+     - Removed redundant and disruptive `audioEl.load()` call; setting `audioEl.src` natively handles resource initialization.
+     - Filtered out `AbortError` in the `.play()` catch handler to prevent false-alarm error toasts during rapid track switching.
+     - Added error listener on `HTMLMediaElement` for diagnostic tracking and wrapped `createMediaElementSource` in a try/catch.
+  4. **Simplified Same-Origin `<audio>` (`mvps.php`)**:
+     - Removed `crossorigin="anonymous"` so same-origin streaming works natively across all desktop and mobile browsers.
 
+---
 
+### 12. Desktop Control Center Architecture & MVP Studio Post-Mortem
+
+#### A. CS2 Workshop Tools Launcher Toast Error (`SyntaxError: Unexpected non-whitespace character after JSON`)
+- **Symptoms**:
+  - Clicking "CS2 Tools" in the Control Center successfully launched `cs2.exe -tools -addon wlzMVP`, but simultaneously popped an error toast:
+    `Error starting tools: SyntaxError: Unexpected non-whitespace character after JSON at position 60 (line 1 column 61)`.
+- **Root Cause**:
+  - In `cs2_control_center.py` inside `ControlCenterHandler.do_POST`:
+    ```python
+    if self.path == "/api/launch_workshop_tools":
+        ...
+        self.send_json({"success": True, "message": "CS2 Workshop Tools launched."})
+    ```
+  - The block was missing a `return` statement.
+  - After sending the 60-byte JSON response, execution continued downward through subsequent `if` blocks and fell through to the fallback 404 handler:
+    ```python
+    self.send_response(404)
+    self.end_headers()
+    self.wfile.write(b'{"error": "Not found"}')
+    ```
+  - This sent an additional HTTP status header and body on the same socket connection directly after byte 60, corrupting the JSON payload and causing the client's `res.json()` call to throw a non-whitespace character error.
+- **Fix Applied**:
+  - Added `return` immediately after `self.send_json(...)` in the `/api/launch_workshop_tools` block.
+  - Updated the frontend `launchWorkshopTools()` callback to verify `out.success` and display clean success toasts.
+
+#### B. Frontend Initialization Hang ("Checking Server..." & "Loading messages...")
+- **Symptoms**:
+  - The desktop Control Center opened with static initial placeholders:
+    - Status badge stuck on `• Checking Server...`.
+    - Announcements stuck on `Loading messages...`.
+    - Activity log displayed only initial static message `Control Center ready. Connected to 81.181.113.120.`.
+    - Navigation tab buttons (`Announcements`, `MVP Anthems`, etc.) were completely unresponsive to clicks.
+- **Root Cause**:
+  1. **Multiline Python String Unescaping**:
+     - In `cs2_control_center.py`, `HTML_TEMPLATE` is defined inside a triple-quoted Python string (`"""..."""`).
+     - A JavaScript string replacement was written as `cleanPath.split('\\').join('/').split('/')`.
+     - When Python parsed the multiline string literal, the two backslashes unescaped into a single backslash `\`.
+     - As a result, the HTTP server sent `cleanPath.split('\')` to the browser.
+     - In JavaScript, `\'` escapes the quote, leaving the string literal unclosed and throwing a fatal `Uncaught SyntaxError: Invalid or unexpected token` on line 2753 of the served HTML.
+     - Because classic `<script>` tags halt entirely upon encountering a syntax error, the entire script failed to evaluate, preventing `initApp()`, `refreshServices()`, and `switchTab()` from ever executing.
+  2. **Non-Standard Event Delegation in switchTab**:
+     - `switchTab(tabId)` was referencing `event.target.classList.add('active')`.
+     - When called programmatically during startup or from contexts where global `window.event` is undefined, this threw a secondary `TypeError: Cannot read properties of undefined (reading 'target')`.
+- **Fixes Applied**:
+  1. **Escape-Proof Backslash Representation**:
+     - Replaced backslash splits with `String.fromCharCode(92)`:
+       ```javascript
+       const parts = cleanPath.split(String.fromCharCode(92)).join('/').split('/');
+       ```
+     - ASCII code 92 is strictly evaluated at client runtime, eliminating any risk of corruption from Python string escaping.
+  2. **Defensive Tab Activation**:
+     - Refactored `switchTab(tabId, btn = null)` to safely query the tab button via `document.querySelector(`.tab-btn[onclick*="${tabId}"]`)` if `event` is undefined.
+
+#### C. Minimalist Vinyl Audio Scrubber & In-Game HUD Simulation
+- **Architecture**:
+  - Pitch-black luxury design (`#000000`, card background `#030303`, border `#161616`).
+  - **Spinning Vinyl Disc Widget**: Pure CSS circular disc with concentric sound grooves and gold center spindle. Plays a smooth `spinVinyl` rotation animation during active playback.
+  - **Live In-Game HUD Preview**: Displays the exact round-end banner: `IN-GAME HUD ★ doggg is MVP of the Round! Playing <DisplayName>`.
+  - **Audio Waveform Scrubber**: 64-bar equalizer gradient with interactive seeking and an overlay showing the exact MVP cut region from `start_seconds` to `start_seconds + duration`.
+  - **In-Browser Audio Streaming**: Implemented `GET /api/audio_stream?path=...` in Python with HTTP 206 Partial Content byte-range support, allowing standard HTML5 `<audio>` players to stream, seek, and preview local sound files.
+  - **MVP Cut Preview**: `previewMvpCut(trackId)` starts playback at `start_time` and dynamically ramps down audio volume over the final 1.0s to simulate the exact in-game round victory experience.
+
+#### D. Dynamic MVP Anthem Durations (5.0s to 15.0s)
+- **Objective**: Allow server administrators to configure exact custom play times for each anthem instead of being locked to a hardcoded 10-second duration.
+- **Implementation**:
+  - Interactive slider per track (`5.0s` to `15.0s`, step `0.5s`).
+  - `ffmpeg` mastering command parameterized with custom duration and auto-calculated fadeout:
+    ```bash
+    ffmpeg -y -ss {start_time} -i {input} -t {duration} -af afade=t=out:st={duration - 1}:d=1 -c:a pcm_s16le -ar 44100 {output.wav}
+    ```
+  - In `MVP_Settings.json`, the duration is stored per kit under `"Message_Center_Bottom_InSecs": int(round(duration))` so in-game center banners match the anthem length perfectly.
+
+#### E. Multi-Track Batch Queue & Unified Workshop Deployment
+- **Architecture**:
+  - Supports queuing multiple audio tracks at once using native multi-file dialog (`tkinter.filedialog.askopenfilenames()`).
+  - Each queued item displays its own independent vinyl deck, waveform scrubber, and duration slider.
+  - **Master Action CTA**: `Convert & Deploy All to Server (X Tracks)` streams an NDJSON pipeline progress feed through all 7 chronological stages:
+    1. **Batch Audio Mastering**: Trims and normalizes all tracks to 44.1 kHz 16-bit PCM WAV.
+    2. **KV3 Soundevents Registration**: Updates `soundevents_addon.vsndevts` registering all `CustomMVP.{clean_id}` soundevents.
+    3. **Source 2 Asset Compilation**: Runs `resourcecompiler.exe -r -f -i content/csgo_addons/wlzMVP/*.*` compiling all `.wav` files into `.vsnd_c`.
+    4. **Server Config Registration**: Updates remote `/home/csgoserver/.../MVP_Settings.json` via SFTP and local backups.
+    5. **VPK Packaging & Workshop Cache Deployment**: Packages all compiled `.vsnd_c` assets into `3827657422.vpk` using Valve VPK and deploys across all remote workshop content paths on the VPS.
+    6. **Local CS2 Client Synchronization**: Copies compiled `.vsnd_c` files directly to local Steam `game/csgo/sounds/mvp/`.
+    7. **Ready for Steam Workshop**: Displays the Steam Workshop Tools launch action banner.
+
+#### F. Resilient Socket Port Binding in Control Center
+- **Enhancement**:
+  - Wrapped `HTTPServer(("127.0.0.1", 5890), ControlCenterHandler)` in a try-catch for `OSError (WinError 10048)`.
+  - If port 5890 is already occupied by a running background daemon or instance, the launcher gracefully connects to the existing instance and opens the UI without crashing.
 

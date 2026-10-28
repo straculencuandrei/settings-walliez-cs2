@@ -7,11 +7,18 @@
         pitch = 1.000000
         vsnd_files_track_01 = "sounds/mvp/gta_iii_full_theme_hq.vsnd"
     }
-    "CustomMVP.stiufeatWALLI3Zmastered" =
+    "CustomMVP.stiufeatwalli3zmastered" =
     {
         type = "csgo_mega"
         volume = 1.000000
         pitch = 1.000000
-        vsnd_files_track_01 = "sounds/mvp/stiufeatWALLI3Zmastered.vsnd"
+        vsnd_files_track_01 = "sounds/mvp/stiufeatwalli3zmastered.vsnd"
+    }
+    "CustomMVP.tacerea_ma_ajuta_mastered" =
+    {
+        type = "csgo_mega"
+        volume = 1.000000
+        pitch = 1.000000
+        vsnd_files_track_01 = "sounds/mvp/tacerea_ma_ajuta_mastered.vsnd"
     }
 }

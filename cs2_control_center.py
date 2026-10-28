@@ -33,6 +33,9 @@ RCON_PASS = "walliez_rcon_2026"
 REMOTE_ANNOUNCER_PATH = "/home/csgoserver/server-cs2/game/csgo/addons/counterstrikesharp/configs/plugins/ServerAnnouncer/ServerAnnouncer.json"
 REMOTE_SERVER_CFG = "/home/csgoserver/server-cs2/game/csgo/cfg/server.cfg"
 REMOTE_COMP_CFG = "/home/csgoserver/server-cs2/game/csgo/cfg/gamemode_competitive_server.cfg"
+REMOTE_CHATMANAGER_CONFIG = "/home/csgoserver/server-cs2/game/csgo/addons/counterstrikesharp/configs/plugins/ChatManager/ChatManager.json"
+REMOTE_ADMINS_CONFIG = "/home/csgoserver/server-cs2/game/csgo/addons/counterstrikesharp/configs/admins.json"
+REMOTE_ADMIN_GROUPS_CONFIG = "/home/csgoserver/server-cs2/game/csgo/addons/counterstrikesharp/configs/admin_groups.json"
 
 FFMPEG_CANDIDATES = [
     r"C:\Users\buzunar\Documents\game\ytallinone\bin\ffmpeg.exe",
@@ -66,6 +69,79 @@ def rcon_exec(command, timeout=3.0):
         return out[12:].decode('utf-8', errors='replace').strip()
     except Exception as e:
         return f"RCON Error: {e}"
+
+def get_tags_and_staff_payload():
+    ssh = get_ssh_client()
+    sftp = ssh.open_sftp()
+    with sftp.open(REMOTE_CHATMANAGER_CONFIG, 'r') as f:
+        cm_data = json.loads(f.read().decode('utf-8'))
+    with sftp.open(REMOTE_ADMINS_CONFIG, 'r') as f:
+        raw_admins = f.read().decode('utf-8').lstrip('\ufeff')
+        admins_data = json.loads(raw_admins)
+    with sftp.open(REMOTE_ADMIN_GROUPS_CONFIG, 'r') as f:
+        raw_groups = f.read().decode('utf-8').lstrip('\ufeff')
+        groups_data = json.loads(raw_groups)
+    sftp.close()
+    ssh.close()
+
+    tags = cm_data.get("Tags", {})
+    staff_by_id = {}
+    for entry_key, entry in admins_data.items():
+        ident = str(entry.get("identity", entry_key)).strip()
+        if not ident:
+            continue
+        name = entry.get("name", entry_key)
+        groups = entry.get("groups", [])
+        if ident not in staff_by_id:
+            staff_by_id[ident] = {
+                "identity": ident,
+                "names": set(),
+                "groups": [],
+                "immunity": entry.get("immunity", 0),
+                "flags": entry.get("flags", [])
+            }
+        if name:
+            staff_by_id[ident]["names"].add(name)
+        if entry_key != ident:
+            staff_by_id[ident]["names"].add(entry_key)
+        for g in groups:
+            if g not in staff_by_id[ident]["groups"]:
+                staff_by_id[ident]["groups"].append(g)
+
+    staff_list = []
+    for ident, info in staff_by_id.items():
+        display_name = " / ".join(sorted(info["names"])) or ident
+        matching_tag_groups = [g for g in info["groups"] if g in tags]
+        has_steam_tag = ident in tags
+        has_overlap = (len(matching_tag_groups) > 1) or (has_steam_tag and len(matching_tag_groups) > 0)
+
+        if has_steam_tag:
+            active_tag_key = ident
+        elif matching_tag_groups:
+            active_tag_key = matching_tag_groups[0]
+        elif info["groups"]:
+            active_tag_key = info["groups"][0]
+        else:
+            active_tag_key = "Default"
+
+        staff_list.append({
+            "identity": ident,
+            "name": display_name,
+            "groups": info["groups"],
+            "matching_tag_groups": matching_tag_groups,
+            "has_overlap": has_overlap,
+            "active_tag_key": active_tag_key,
+            "has_steam_tag": has_steam_tag,
+            "immunity": info["immunity"]
+        })
+
+    return {
+        "success": True,
+        "tags": tags,
+        "staff": staff_list,
+        "groups": list(groups_data.keys()),
+        "team_tags": cm_data.get("TeamTags", {})
+    }
 
 def a2s_info():
     try:
@@ -145,40 +221,72 @@ def format_start_time(st):
     except ValueError:
         return "00:00:00"
 
-def browse_audio_file():
+def browse_audio_files(multiple=True):
     try:
         import tkinter as tk
         from tkinter import filedialog
         root = tk.Tk()
         root.withdraw()
         root.attributes('-topmost', True)
-        path = filedialog.askopenfilename(
-            title="Select Audio File for MVP Anthem",
-            filetypes=[
-                ("Audio Files", "*.mp3 *.wav *.ogg *.flac *.m4a *.aac *.wma"),
-                ("All Files", "*.*")
-            ]
-        )
-        root.destroy()
-        return path or ""
+        if multiple:
+            paths = filedialog.askopenfilenames(
+                title="Select Audio File(s) for MVP Anthems",
+                filetypes=[
+                    ("Audio Files", "*.mp3 *.wav *.ogg *.flac *.m4a *.aac *.wma"),
+                    ("All Files", "*.*")
+                ]
+            )
+            root.destroy()
+            return list(paths) if paths else []
+        else:
+            path = filedialog.askopenfilename(
+                title="Select Audio File for MVP Anthem",
+                filetypes=[
+                    ("Audio Files", "*.mp3 *.wav *.ogg *.flac *.m4a *.aac *.wma"),
+                    ("All Files", "*.*")
+                ]
+            )
+            root.destroy()
+            return [path] if path else []
     except Exception:
-        return ""
+        return []
 
-def execute_mvp_pipeline(audio_path, display_name, start_time="00:00:00"):
+def browse_audio_file():
+    paths = browse_audio_files(multiple=False)
+    return paths[0] if paths else ""
+
+def execute_mvp_batch_pipeline(tracks):
     import tempfile
     import vpk
 
-    if not audio_path or not os.path.exists(audio_path):
-        yield {"step": 1, "status": "failed", "msg": f"Audio file not found: '{audio_path}'"}
+    if not tracks:
+        yield {"step": 1, "status": "failed", "msg": "No audio tracks provided in batch queue."}
         return
 
-    clean_id = sanitize_id(os.path.splitext(os.path.basename(audio_path))[0])
-    if not display_name or not display_name.strip():
-        display_name = os.path.splitext(os.path.basename(audio_path))[0].replace("_", " ").title()
-    fmt_start = format_start_time(start_time)
+    valid_tracks = []
+    for tr in tracks:
+        p = tr.get("audio_path", "").strip(' "\'')
+        if p and os.path.exists(p):
+            cid = sanitize_id(tr.get("clean_id", "") or os.path.splitext(os.path.basename(p))[0])
+            name = tr.get("display_name", "").strip() or os.path.splitext(os.path.basename(p))[0].replace("_", " ").title()
+            start = format_start_time(tr.get("start_time", "00:00:00"))
+            try:
+                dur = float(tr.get("duration", 10.0))
+                dur = max(3.0, min(25.0, dur))
+            except (ValueError, TypeError):
+                dur = 10.0
+            valid_tracks.append({
+                "audio_path": p,
+                "display_name": name,
+                "start_time": start,
+                "duration": dur,
+                "clean_id": cid
+            })
 
-    # STEP 1: Trim & Master Audio (10s, 1s fadeout, 44.1kHz PCM WAV)
-    yield {"step": 1, "status": "running", "msg": f"Mastering '{os.path.basename(audio_path)}' from {fmt_start} (10s with 1s fadeout)..."}
+    if not valid_tracks:
+        yield {"step": 1, "status": "failed", "msg": "Specified audio file(s) do not exist on disk."}
+        return
+
     for d in [
         os.path.join(CONTENT_DIR, "sounds", "mvp"),
         os.path.join(CONTENT_DIR, "soundevents"),
@@ -190,50 +298,63 @@ def execute_mvp_pipeline(audio_path, display_name, start_time="00:00:00"):
     ]:
         os.makedirs(d, exist_ok=True)
 
-    dest_wav = os.path.join(CONTENT_DIR, "sounds", "mvp", f"{clean_id}.wav")
-    backup_wav = os.path.join(LOCAL_BACKUP, "sounds", "mvp", f"{clean_id}.wav")
-
     ffmpeg_local = find_ffmpeg()
-    converted_ok = False
+    total_tracks = len(valid_tracks)
 
-    if ffmpeg_local and os.path.exists(ffmpeg_local):
-        try:
-            cmd = [
-                ffmpeg_local, "-y", "-ss", fmt_start, "-i", audio_path,
-                "-t", "10", "-af", "afade=t=out:st=9:d=1",
-                "-c:a", "pcm_s16le", "-ar", "44100", dest_wav
-            ]
-            res = subprocess.run(cmd, capture_output=True, text=True, check=True)
-            shutil.copy2(dest_wav, backup_wav)
-            converted_ok = True
-        except Exception:
-            converted_ok = False
+    # STEP 1: Trim & Master All Audio Tracks
+    yield {"step": 1, "status": "running", "msg": f"Mastering {total_tracks} track(s) (PCM WAV, 44.1kHz, customized duration)..."}
 
-    if not converted_ok:
-        try:
-            ssh = get_ssh_client(timeout=15)
-            sftp = ssh.open_sftp()
-            rem_in = f"/tmp/mvp_in_{clean_id}.tmp"
-            rem_wav = f"/tmp/mvp_out_{clean_id}.wav"
-            sftp.put(audio_path, rem_in)
-            cmd = f"/usr/local/bin/ffmpeg -y -ss {fmt_start} -i {rem_in} -t 10 -af 'afade=t=out:st=9:d=1' -c:a pcm_s16le -ar 44100 {rem_wav}"
-            _, stdout, _ = ssh.exec_command(cmd)
-            stdout.channel.recv_exit_status()
-            sftp.get(rem_wav, dest_wav)
-            sftp.close()
-            ssh.exec_command(f"rm -f {rem_in} {rem_wav}")
-            ssh.close()
-            shutil.copy2(dest_wav, backup_wav)
-            converted_ok = True
-        except Exception as e:
-            yield {"step": 1, "status": "failed", "msg": f"Audio mastering failed: {e}"}
-            return
+    for i, t in enumerate(valid_tracks, start=1):
+        cid = t["clean_id"]
+        fmt_start = t["start_time"]
+        dur = t["duration"]
+        fade_start = max(0.0, dur - 1.0)
+        p = t["audio_path"]
+        name = t["display_name"]
 
-    wav_size = os.path.getsize(dest_wav) if os.path.exists(dest_wav) else 0
-    yield {"step": 1, "status": "completed", "msg": f"Mastered 10.0s WAV created: {wav_size:,} bytes"}
+        dest_wav = os.path.join(CONTENT_DIR, "sounds", "mvp", f"{cid}.wav")
+        backup_wav = os.path.join(LOCAL_BACKUP, "sounds", "mvp", f"{cid}.wav")
+        converted_ok = False
+
+        if ffmpeg_local and os.path.exists(ffmpeg_local):
+            try:
+                cmd = [
+                    ffmpeg_local, "-y", "-ss", fmt_start, "-i", p,
+                    "-t", str(dur), "-af", f"afade=t=out:st={fade_start:.1f}:d=1",
+                    "-c:a", "pcm_s16le", "-ar", "44100", dest_wav
+                ]
+                subprocess.run(cmd, capture_output=True, text=True, check=True)
+                shutil.copy2(dest_wav, backup_wav)
+                converted_ok = True
+            except Exception:
+                converted_ok = False
+
+        if not converted_ok:
+            try:
+                ssh = get_ssh_client(timeout=20)
+                sftp = ssh.open_sftp()
+                rem_in = f"/tmp/mvp_in_{cid}.tmp"
+                rem_wav = f"/tmp/mvp_out_{cid}.wav"
+                sftp.put(p, rem_in)
+                cmd = f"/usr/local/bin/ffmpeg -y -ss {fmt_start} -i {rem_in} -t {dur} -af 'afade=t=out:st={fade_start:.1f}:d=1' -c:a pcm_s16le -ar 44100 {rem_wav}"
+                _, stdout, _ = ssh.exec_command(cmd)
+                stdout.channel.recv_exit_status()
+                sftp.get(rem_wav, dest_wav)
+                sftp.close()
+                ssh.exec_command(f"rm -f {rem_in} {rem_wav}")
+                ssh.close()
+                shutil.copy2(dest_wav, backup_wav)
+                converted_ok = True
+            except Exception as e:
+                yield {"step": 1, "status": "failed", "msg": f"Failed mastering '{name}': {e}"}
+                return
+
+        yield {"step": 1, "status": "running", "msg": f"[{i}/{total_tracks}] Mastered '{name}' ({dur:.1f}s from {fmt_start})"}
+
+    yield {"step": 1, "status": "completed", "msg": f"All {total_tracks} track(s) mastered into 44.1kHz PCM WAV"}
 
     # STEP 2: Generate / Update KV3 soundevents_addon.vsndevts
-    yield {"step": 2, "status": "running", "msg": "Generating KV3 soundevents definitions..."}
+    yield {"step": 2, "status": "running", "msg": "Generating KV3 soundevents definitions for all anthems..."}
     try:
         local_mvp_dir = os.path.join(LOCAL_BACKUP, "sounds", "mvp")
         all_tracks = []
@@ -243,8 +364,9 @@ def execute_mvp_pipeline(audio_path, display_name, start_time="00:00:00"):
                     k = sanitize_id(os.path.splitext(f)[0])
                     if k not in all_tracks:
                         all_tracks.append(k)
-        if clean_id not in all_tracks:
-            all_tracks.append(clean_id)
+        for t in valid_tracks:
+            if t["clean_id"] not in all_tracks:
+                all_tracks.append(t["clean_id"])
 
         soundevents_lines = [
             "<!-- kv3 encoding:text:version{e21c7f3c-8a33-41c5-9977-a76d3a32aa0d} format:generic:version{7412167c-06e9-4698-aff2-e63eb59037e7} -->",
@@ -288,7 +410,7 @@ def execute_mvp_pipeline(audio_path, display_name, start_time="00:00:00"):
             with open(target, "w", encoding="utf-8") as f:
                 f.write(addoninfo_text)
 
-        yield {"step": 2, "status": "completed", "msg": f"KV3 definitions updated ({len(all_tracks)} tracks registered)"}
+        yield {"step": 2, "status": "completed", "msg": f"KV3 definitions updated ({len(all_tracks)} total tracks in addon)"}
     except Exception as e:
         yield {"step": 2, "status": "failed", "msg": f"Soundevents generation failed: {e}"}
         return
@@ -297,18 +419,19 @@ def execute_mvp_pipeline(audio_path, display_name, start_time="00:00:00"):
     yield {"step": 3, "status": "running", "msg": "Compiling binary .vsnd_c and .vsndevts_c assets..."}
     try:
         cmd = [COMPILER_EXE, "-r", "-f", "-i", f"{CONTENT_DIR}\\*.*"]
-        res = subprocess.run(cmd, capture_output=True, text=True, timeout=90)
-        expected_vsnd = os.path.join(GAME_DIR, "sounds", "mvp", f"{clean_id}.vsnd_c")
-        if os.path.exists(expected_vsnd):
-            yield {"step": 3, "status": "completed", "msg": f"Compiled asset created: {clean_id}.vsnd_c ({os.path.getsize(expected_vsnd):,} bytes)"}
-        else:
-            yield {"step": 3, "status": "completed", "msg": "Resource compilation completed successfully"}
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        compiled_count = 0
+        for t in valid_tracks:
+            vsnd_path = os.path.join(GAME_DIR, "sounds", "mvp", f"{t['clean_id']}.vsnd_c")
+            if os.path.exists(vsnd_path):
+                compiled_count += 1
+        yield {"step": 3, "status": "completed", "msg": f"Resource compiler successfully built assets ({compiled_count}/{total_tracks} verified)"}
     except Exception as e:
         yield {"step": 3, "status": "failed", "msg": f"Resource compilation failed: {e}"}
         return
 
-    # STEP 4: Register in Server MVP_Settings.json & Local Backup
-    yield {"step": 4, "status": "running", "msg": "Registering kit in server MVP_Settings.json..."}
+    # STEP 4: Register all tracks in Server MVP_Settings.json & Local Backup
+    yield {"step": 4, "status": "running", "msg": f"Registering {total_tracks} anthem(s) in server database..."}
     try:
         ssh = get_ssh_client(timeout=15)
         sftp = ssh.open_sftp()
@@ -319,16 +442,22 @@ def execute_mvp_pipeline(audio_path, display_name, start_time="00:00:00"):
         except Exception:
             server_mvp_data = {}
 
-        kit_id = f"mvp_{clean_id}"
-        server_mvp_data[kit_id] = {
-            "MVP_Kit_Name": display_name,
-            "Sound_Path_1": f"sounds/mvp/{clean_id}.vsnd_c",
-            "SoundEvent": f"CustomMVP.{clean_id}",
-            "CanBePreview": True,
-            "Message_Chat": True,
-            "Message_Center_Bottom": True,
-            "Message_Center_Bottom_InSecs": 10
-        }
+        for t in valid_tracks:
+            cid = t["clean_id"]
+            name = t["display_name"]
+            dur = int(round(t["duration"]))
+            kit_id = f"mvp_{cid}"
+            server_mvp_data[kit_id] = {
+                "MVP_Kit_Name": name,
+                "Sound_Path_1": f"sounds/mvp/{cid}.vsnd_c",
+                "SoundEvent": f"CustomMVP.{cid}",
+                "Sound_Event": f"CustomMVP.{cid}",
+                "CanBePreview": True,
+                "Message_Chat": True,
+                "Message_Center_Bottom": True,
+                "Message_Center_Bottom_InSecs": dur
+            }
+
         formatted_json = json.dumps(server_mvp_data, indent=2, ensure_ascii=False)
         with sftp.open(REMOTE_MVP_SETTINGS, "w") as f:
             f.write(formatted_json)
@@ -339,9 +468,9 @@ def execute_mvp_pipeline(audio_path, display_name, start_time="00:00:00"):
         with open(os.path.join(LOCAL_BACKUP, "MVP_Settings.json"), "w", encoding="utf-8") as f:
             f.write(formatted_json)
 
-        yield {"step": 4, "status": "completed", "msg": f"Registered '{display_name}' ({kit_id}) in server database"}
+        yield {"step": 4, "status": "completed", "msg": f"Registered {total_tracks} anthem(s) in server MVP_Settings.json with custom durations"}
     except Exception as e:
-        yield {"step": 4, "status": "failed", "msg": f"Failed to update MVP_Settings.json: {e}"}
+        yield {"step": 4, "status": "failed", "msg": f"Failed updating server settings: {e}"}
         return
 
     # STEP 5: Pack & Deploy Workshop VPK Cache
@@ -385,21 +514,58 @@ def execute_mvp_pipeline(audio_path, display_name, start_time="00:00:00"):
         os.makedirs(VPK_DIR, exist_ok=True)
         with open(os.path.join(VPK_DIR, "publish_data.txt"), "w", encoding="utf-8") as f:
             f.write(publish_data_content)
-        shutil.copyfile(temp_vpk, os.path.join(VPK_DIR, f"{WORKSHOP_ID}_000.vpk"))
         shutil.copyfile(temp_vpk, os.path.join(VPK_DIR, f"{WORKSHOP_ID}.vpk"))
 
-        ssh = get_ssh_client(timeout=15)
+        ssh = get_ssh_client(timeout=20)
         sftp = ssh.open_sftp()
         for rem_dir in REMOTE_WORKSHOP_PATHS:
             ssh.exec_command(f"mkdir -p {rem_dir}")
             sftp.put(temp_vpk, f"{rem_dir}/{WORKSHOP_ID}.vpk")
-            sftp.put(temp_vpk, f"{rem_dir}/{WORKSHOP_ID}_000.vpk")
             sftp.put(os.path.join(VPK_DIR, "publish_data.txt"), f"{rem_dir}/publish_data.txt")
         sftp.close()
 
         ssh.exec_command("chown -R csgoserver:csgoserver /home/csgoserver/server-cs2/game/bin/linuxsteamrt64/steamapps/workshop")
         ssh.exec_command("chown -R csgoserver:csgoserver /home/csgoserver/server-cs2/steamapps/workshop")
         ssh.exec_command("chown -R csgoserver:csgoserver /home/csgoserver/Steam/steamapps/workshop")
+
+        # Deploy standalone MP3 / VSND_C for Web Preview & Direct Server Fallback
+        remote_sound_dirs = [
+            "/home/csgoserver/server-cs2/game/csgo/sounds/mvp",
+            "/home/csgoserver/server-cs2/game/csgo_addons/wlzMVP/sounds/mvp"
+        ]
+        ffmpeg_local = find_ffmpeg()
+        sftp = ssh.open_sftp()
+        for t in valid_tracks:
+            cid = t["clean_id"]
+            wav_src = os.path.join(CONTENT_DIR, "sounds", "mvp", f"{cid}.wav")
+            vsnd_src = os.path.join(GAME_DIR, "sounds", "mvp", f"{cid}.vsnd_c")
+            mp3_temp = os.path.join(tempfile.gettempdir(), f"{cid}.mp3")
+
+            # Generate MP3 for web streaming
+            if os.path.exists(wav_src):
+                if ffmpeg_local and os.path.exists(ffmpeg_local):
+                    try:
+                        subprocess.run([ffmpeg_local, "-y", "-i", wav_src, "-b:a", "320k", mp3_temp], capture_output=True, check=True)
+                    except Exception:
+                        pass
+
+            for snd_dir in remote_sound_dirs:
+                ssh.exec_command(f"mkdir -p {snd_dir}")
+                if os.path.exists(mp3_temp):
+                    sftp.put(mp3_temp, f"{snd_dir}/{cid}.mp3")
+                if os.path.exists(vsnd_src):
+                    sftp.put(vsnd_src, f"{snd_dir}/{cid}.vsnd_c")
+                if os.path.exists(wav_src):
+                    sftp.put(wav_src, f"{snd_dir}/{cid}.wav")
+
+            if os.path.exists(mp3_temp):
+                os.remove(mp3_temp)
+
+        sftp.close()
+        ssh.exec_command("chown -R csgoserver:csgoserver /home/csgoserver/server-cs2/game/csgo/sounds/mvp")
+        ssh.exec_command("chown -R csgoserver:csgoserver /home/csgoserver/server-cs2/game/csgo_addons/wlzMVP/sounds/mvp")
+        ssh.exec_command("chmod -R 755 /home/csgoserver/server-cs2/game/csgo/sounds/mvp")
+        ssh.exec_command("chmod -R 755 /home/csgoserver/server-cs2/game/csgo_addons/wlzMVP/sounds/mvp")
         ssh.close()
         os.remove(temp_vpk)
 
@@ -420,10 +586,11 @@ def execute_mvp_pipeline(audio_path, display_name, start_time="00:00:00"):
         if local_cs2:
             target_sound_dir = os.path.join(local_cs2, "sounds", "mvp")
             os.makedirs(target_sound_dir, exist_ok=True)
-            compiled_src = os.path.join(GAME_DIR, "sounds", "mvp", f"{clean_id}.vsnd_c")
-            if os.path.exists(compiled_src):
-                shutil.copy2(compiled_src, os.path.join(target_sound_dir, f"{clean_id}.vsnd_c"))
-        yield {"step": 6, "status": "completed", "msg": "Local game files synchronized"}
+            for t in valid_tracks:
+                compiled_src = os.path.join(GAME_DIR, "sounds", "mvp", f"{t['clean_id']}.vsnd_c")
+                if os.path.exists(compiled_src):
+                    shutil.copy2(compiled_src, os.path.join(target_sound_dir, f"{t['clean_id']}.vsnd_c"))
+        yield {"step": 6, "status": "completed", "msg": f"Synchronized {total_tracks} anthem(s) to local CS2 files"}
     except Exception as e:
         yield {"step": 6, "status": "completed", "msg": f"Local sync notice: {e}"}
 
@@ -431,8 +598,16 @@ def execute_mvp_pipeline(audio_path, display_name, start_time="00:00:00"):
     yield {
         "step": 7,
         "status": "completed",
-        "msg": f"Anthem '{display_name}' mastered & deployed! Workshop addon wlzMVP is ready to be published to Steam."
+        "msg": f"Successfully mastered & deployed {total_tracks} anthem(s)! Workshop pack wlzMVP is fully compiled and ready to update."
     }
+
+def execute_mvp_pipeline(audio_path, display_name, start_time="00:00:00", duration=10.0):
+    return execute_mvp_batch_pipeline([{
+        "audio_path": audio_path,
+        "display_name": display_name,
+        "start_time": start_time,
+        "duration": duration
+    }])
 
 def sync_local_client_files():
     steam_paths = [
@@ -518,7 +693,6 @@ def rebuild_full_workshop_addon():
     os.makedirs(VPK_DIR, exist_ok=True)
     with open(os.path.join(VPK_DIR, "publish_data.txt"), "w", encoding="utf-8") as f:
         f.write(publish_data_content)
-    shutil.copyfile(temp_vpk, os.path.join(VPK_DIR, f"{WORKSHOP_ID}_000.vpk"))
     shutil.copyfile(temp_vpk, os.path.join(VPK_DIR, f"{WORKSHOP_ID}.vpk"))
 
     ssh = get_ssh_client(timeout=15)
@@ -526,7 +700,6 @@ def rebuild_full_workshop_addon():
     for rem_dir in REMOTE_WORKSHOP_PATHS:
         ssh.exec_command(f"mkdir -p {rem_dir}")
         sftp.put(temp_vpk, f"{rem_dir}/{WORKSHOP_ID}.vpk")
-        sftp.put(temp_vpk, f"{rem_dir}/{WORKSHOP_ID}_000.vpk")
         sftp.put(os.path.join(VPK_DIR, "publish_data.txt"), f"{rem_dir}/publish_data.txt")
     sftp.close()
 
@@ -1266,7 +1439,414 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       background: rgba(239, 68, 68, 0.2);
       color: #ef4444;
     }
-  </style>
+
+    /* Chat Tags & Staff */
+    .cs2-hud-chat-box {
+      background: rgba(8, 8, 12, 0.94);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.7), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+      border-radius: 6px;
+      padding: 12px 16px;
+      font-family: 'JetBrains Mono', 'Segoe UI', -apple-system, sans-serif;
+    }
+    .cs2-chat-line {
+      font-size: 0.82rem;
+      line-height: 1.55;
+      letter-spacing: 0.01em;
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
+      word-break: break-word;
+    }
+    .staff-card {
+      background: #040404;
+      border: 1px solid var(--card-border);
+      border-radius: 6px;
+      padding: 10px 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      transition: border-color 0.15s ease;
+    }
+    .staff-card.has-overlap {
+      border-color: rgba(234, 179, 8, 0.4);
+      background: rgba(234, 179, 8, 0.03);
+    }
+    .tag-badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 7px;
+      border-radius: 4px;
+      font-size: 0.72rem;
+      font-family: 'JetBrains Mono', monospace;
+      font-weight: 600;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      background: #111111;
+    }
+    .color-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 0.70rem;
+      font-family: 'JetBrains Mono', monospace;
+      cursor: pointer;
+      background: #0d0d0d;
+      border: 1px solid var(--card-border);
+      transition: all 0.15s ease;
+    }
+    .color-chip:hover {
+      background: #18181b;
+      border-color: #3f3f46;
+      transform: translateY(-1px);
+    }
+    .color-chip-swatch {
+      width: 8px;
+      height: 8px;
+      border-radius: 2px;
+    }
+  
+    /* MVP Studio Minimal Vinyl & Waveform Styles (Pitch-Black Luxury) */
+    .mvp-queue-toolbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-bottom: 16px;
+      padding: 12px 16px;
+      background: #020202;
+      border: 1px solid var(--card-border);
+      border-radius: 6px;
+    }
+    .mvp-queue-count {
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .mvp-queue-badge {
+      font-size: 0.72rem;
+      padding: 2px 8px;
+      border-radius: 12px;
+      background: #111;
+      border: 1px solid #27272a;
+      color: #22c55e;
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .mvp-track-card {
+      background: #030303;
+      border: 1px solid var(--card-border);
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+    .mvp-track-card:hover {
+      border-color: #27272a;
+    }
+    .mvp-card-top {
+      display: flex;
+      gap: 16px;
+      align-items: flex-start;
+    }
+    .mvp-vinyl-jacket {
+      width: 76px;
+      height: 76px;
+      min-width: 76px;
+      background: #000;
+      border: 1px solid #1a1a1a;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      cursor: pointer;
+      box-shadow: inset 0 0 12px rgba(0,0,0,0.9);
+    }
+    .mvp-vinyl-disc {
+      width: 68px;
+      height: 68px;
+      border-radius: 50%;
+      background: repeating-radial-gradient(circle, #222 0, #222 2px, #121212 3px, #121212 4px);
+      border: 2px solid #2a2a2a;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.8);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      transition: transform 0.2s ease;
+    }
+    .mvp-vinyl-disc.spinning {
+      animation: spinVinyl 3.5s linear infinite;
+    }
+    @keyframes spinVinyl {
+      100% { transform: rotate(360deg); }
+    }
+    .mvp-vinyl-center {
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: #141005;
+      border: 1.5px solid #d4af37;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .mvp-vinyl-play-icon {
+      width: 0;
+      height: 0;
+      border-top: 4px solid transparent;
+      border-bottom: 4px solid transparent;
+      border-left: 6px solid #d4af37;
+      margin-left: 2px;
+    }
+    .mvp-vinyl-disc.spinning .mvp-vinyl-play-icon {
+      border-top: 4px solid transparent;
+      border-bottom: 4px solid transparent;
+      border-left: 6px solid #22c55e;
+    }
+    .mvp-track-info {
+      flex: 1;
+      min-width: 0;
+    }
+    .mvp-track-badges {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+      margin-bottom: 6px;
+    }
+    .mvp-pill {
+      font-size: 0.68rem;
+      padding: 2px 7px;
+      border-radius: 4px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+    }
+    .mvp-pill-green {
+      background: rgba(34, 197, 94, 0.1);
+      border: 1px solid rgba(34, 197, 94, 0.3);
+      color: #22c55e;
+    }
+    .mvp-pill-subtle {
+      background: #090909;
+      border: 1px solid #1a1a1a;
+      color: var(--text-muted);
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .mvp-pill-event {
+      background: #090909;
+      border: 1px solid #1a1a1a;
+      color: #38bdf8;
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .mvp-title-input {
+      width: 100%;
+      font-size: 0.96rem;
+      font-weight: 700;
+      color: #ffffff;
+      background: transparent;
+      border: none;
+      border-bottom: 1px solid #1c1c1c;
+      border-radius: 0;
+      padding: 3px 0;
+      margin-bottom: 6px;
+      transition: border-color 0.2s ease;
+    }
+    .mvp-title-input:focus {
+      border-bottom-color: #22c55e;
+      outline: none;
+    }
+    .mvp-hud-box {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: #000000;
+      border: 1px solid #161616;
+      border-radius: 4px;
+      padding: 4px 10px;
+      font-size: 0.74rem;
+      color: #d4d4d8;
+    }
+    .mvp-hud-tag {
+      background: #0369a1;
+      color: #ffffff;
+      font-size: 0.62rem;
+      font-weight: 700;
+      padding: 1px 5px;
+      border-radius: 2px;
+      letter-spacing: 0.04em;
+    }
+    .mvp-time-readout {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: #ededed;
+      text-align: right;
+      white-space: nowrap;
+    }
+    .mvp-waveform-wrap {
+      position: relative;
+      height: 48px;
+      background: #010101;
+      border: 1px solid #141414;
+      border-radius: 6px;
+      overflow: hidden;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      padding: 0 4px;
+    }
+    .mvp-waveform-bars {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 2px;
+      pointer-events: none;
+    }
+    .mvp-wave-bar {
+      flex: 1;
+      min-width: 2px;
+      max-width: 4px;
+      background: linear-gradient(180deg, #10b981 0%, #06b6d4 100%);
+      border-radius: 2px;
+      opacity: 0.55;
+      transition: opacity 0.15s ease, height 0.2s ease;
+    }
+    .mvp-wave-bar.active-slice {
+      opacity: 1;
+      filter: drop-shadow(0 0 3px rgba(16, 185, 129, 0.6));
+    }
+    .mvp-cut-overlay {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      background: rgba(16, 185, 129, 0.12);
+      border-left: 2px solid #10b981;
+      border-right: 2px solid #06b6d4;
+      pointer-events: none;
+      transition: left 0.1s linear, width 0.1s linear;
+    }
+    .mvp-slider-track-wrap {
+      position: relative;
+      margin-top: 4px;
+    }
+    .mvp-scrubber-slider {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 100%;
+      height: 6px;
+      background: #121212;
+      border-radius: 3px;
+      outline: none;
+      margin: 0;
+      cursor: pointer;
+    }
+    .mvp-scrubber-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: #ffffff;
+      box-shadow: 0 0 6px rgba(255, 255, 255, 0.8);
+      cursor: pointer;
+      transition: transform 0.1s ease;
+    }
+    .mvp-scrubber-slider::-webkit-slider-thumb:hover {
+      transform: scale(1.2);
+    }
+    .mvp-controls-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 4px;
+      padding-top: 8px;
+      border-top: 1px solid #121212;
+    }
+    .mvp-btn-playback {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: #0d0d0d;
+      border: 1px solid #222;
+      color: #fff;
+      padding: 6px 12px;
+      border-radius: 4px;
+      font-size: 0.76rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .mvp-btn-playback:hover {
+      background: #181818;
+      border-color: #333;
+    }
+    .mvp-duration-control {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: #020202;
+      border: 1px solid #141414;
+      padding: 4px 10px;
+      border-radius: 4px;
+    }
+    .mvp-dur-label {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      white-space: nowrap;
+    }
+    .mvp-dur-val {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.76rem;
+      font-weight: 700;
+      color: #22c55e;
+      min-width: 38px;
+    }
+    .mvp-dur-slider {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 80px;
+      height: 4px;
+      background: #222;
+      border-radius: 2px;
+      outline: none;
+    }
+    .mvp-dur-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: #22c55e;
+      cursor: pointer;
+    }
+    .btn-batch-deploy {
+      background: #22c55e !important;
+      color: #000000 !important;
+      font-weight: 700 !important;
+      font-size: 0.92rem !important;
+      padding: 12px 28px !important;
+      border: none !important;
+      border-radius: 6px !important;
+      cursor: pointer;
+      transition: opacity 0.15s, transform 0.1s;
+    }
+    .btn-batch-deploy:hover {
+      opacity: 0.92;
+      transform: translateY(-1px);
+    }
+</style>
 </head>
 <body>
 
@@ -1289,6 +1869,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     <!-- Navigation Tabs -->
     <div class="nav-tabs">
       <button class="tab-btn active" onclick="switchTab('tab-announcements')">Announcements</button>
+      <button class="tab-btn" onclick="switchTab('tab-tags')">Chat Tags & Staff</button>
       <button class="tab-btn" onclick="switchTab('tab-hostname')">Server Name</button>
       <button class="tab-btn" onclick="switchTab('tab-convars')">Match Convars</button>
       <button class="tab-btn" onclick="switchTab('tab-mvp')">MVP Anthems</button>
@@ -1355,6 +1936,119 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         </div>
       </div>
     </div>
+    <!-- TAB: Chat Tags & Staff Roles -->
+    <div id="tab-tags" class="tab-content">
+      
+      <!-- Top Overview & Live Simulation -->
+      <div class="card" style="margin-bottom: 16px;">
+        <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;">
+          <div>
+            <div class="card-title">CS2 In-Game Chat Live Simulation</div>
+            <div class="card-desc">Authentic Counter-Strike 2 in-game chat HUD rendering staff tags, player names, and message colors.</div>
+          </div>
+          <div style="display: flex; gap: 8px;">
+            <button class="btn btn-sm" id="btnPreviewStream" onclick="setChatPreviewMode('stream')">Staff Conversation</button>
+            <button class="btn btn-sm btn-secondary" id="btnPreviewSandbox" onclick="setChatPreviewMode('sandbox')">Interactive Sandbox</button>
+          </div>
+        </div>
+
+        <!-- In-Game Chat HUD Box -->
+        <div class="cs2-hud-chat-box" style="margin-top: 14px;">
+          <!-- Mode 1: Simulated Multi-Role Staff Conversation -->
+          <div id="cs2ChatStreamContainer" style="display: flex; flex-direction: column; gap: 5px;"></div>
+
+          <!-- Mode 2: Interactive Sandbox Tester -->
+          <div id="cs2ChatSandboxContainer" style="display: none; flex-direction: column; gap: 10px;">
+            <div id="cs2SandboxPreviewLine" class="cs2-chat-line" style="padding-bottom: 8px; border-bottom: 1px solid rgba(255,255,255,0.08); min-height: 24px;"></div>
+            <div style="display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; background: rgba(0,0,0,0.5); border: 1px solid var(--card-border); padding: 10px 12px; border-radius: 6px;">
+              <div style="width: 140px;">
+                <label style="font-size: 0.68rem; color: var(--text-muted); margin-bottom: 4px; display: block;">Select Tag / Role</label>
+                <select id="sandboxRoleSelect" class="form-control" style="height: 28px; font-size: 0.76rem;" onchange="onSandboxRoleChanged()"></select>
+              </div>
+              <div style="width: 130px;">
+                <label style="font-size: 0.68rem; color: var(--text-muted); margin-bottom: 4px; display: block;">Player Name</label>
+                <input type="text" id="sandboxPlayerName" value="doggg" class="form-control" style="height: 28px; font-size: 0.76rem;" oninput="updateSandboxPreview()">
+              </div>
+              <div style="flex: 1; min-width: 180px;">
+                <label style="font-size: 0.68rem; color: var(--text-muted); margin-bottom: 4px; display: block;">Sample Message</label>
+                <input type="text" id="sandboxMessage" value="Welcome to the server! Good luck and have fun." class="form-control" style="height: 28px; font-size: 0.76rem;" oninput="updateSandboxPreview()">
+              </div>
+              <div style="display: flex; gap: 10px; align-items: center; height: 28px;">
+                <label style="display: inline-flex; align-items: center; gap: 4px; font-size: 0.72rem; color: #f87171; cursor: pointer;">
+                  <input type="checkbox" id="sandboxDeadToggle" onchange="updateSandboxPreview()"> [DEAD]
+                </label>
+                <label style="display: inline-flex; align-items: center; gap: 4px; font-size: 0.72rem; color: #a1a1aa; cursor: pointer;">
+                  <input type="radio" name="sandboxTeam" value="all" checked onchange="updateSandboxPreview()"> All
+                </label>
+                <label style="display: inline-flex; align-items: center; gap: 4px; font-size: 0.72rem; color: #38bdf8; cursor: pointer;">
+                  <input type="radio" name="sandboxTeam" value="ct" onchange="updateSandboxPreview()"> CT
+                </label>
+                <label style="display: inline-flex; align-items: center; gap: 4px; font-size: 0.72rem; color: #fbbf24; cursor: pointer;">
+                  <input type="radio" name="sandboxTeam" value="t" onchange="updateSandboxPreview()"> T
+                </label>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Staff Overlaps & Role Resolver -->
+      <div class="card" style="margin-bottom: 16px;">
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
+          <div>
+            <div class="card-title">Server Staff & Role Assignments</div>
+            <div class="card-desc">Automatically inspects server administrators from <code style="font-size:0.75rem;">admins.json</code>. Resolves overlapping staff roles if multiple groups apply.</div>
+          </div>
+          <button class="btn btn-sm btn-secondary" onclick="loadTagsAndStaff()">Refresh Staff</button>
+        </div>
+        <div id="staffListContainer" style="display: flex; flex-direction: column; gap: 8px;">
+          <div style="color: var(--text-muted); font-size: 0.8rem; padding: 12px; text-align: center;">Loading staff members from server...</div>
+        </div>
+      </div>
+
+      <!-- Configured Tags Table -->
+      <div class="card">
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
+          <div>
+            <div class="card-title">Configured Chat Tags</div>
+            <div class="card-desc">Edit existing tags, add custom group/SteamID tags, and select CS2 colors.</div>
+          </div>
+          <div style="display: flex; gap: 8px;">
+            <button class="btn btn-sm btn-secondary" onclick="openAddTagModal()">+ Add Custom Tag</button>
+            <button class="btn btn-sm" onclick="saveAllTagsAndStaff()">Save Changes & Reload</button>
+          </div>
+        </div>
+
+        <!-- Color Palette Quick Swatches -->
+        <div style="margin-bottom: 14px; background: #060606; border: 1px solid var(--card-border); border-radius: 6px; padding: 10px 12px;">
+          <div style="font-size: 0.68rem; color: var(--text-muted); margin-bottom: 6px; text-transform: uppercase; font-weight: 600; letter-spacing: 0.04em;">
+            Quick Color Palette (Click to insert into selected input)
+          </div>
+          <div class="color-tags-container" id="chatTagColorPalette"></div>
+        </div>
+
+        <!-- Tags Table -->
+        <div style="overflow-x: auto;">
+          <table style="width: 100%; border-collapse: collapse; font-size: 0.78rem;">
+            <thead>
+              <tr style="border-bottom: 1px solid var(--card-border); text-align: left; color: var(--text-muted);">
+                <th style="padding: 8px 10px;">Role / Target Key</th>
+                <th style="padding: 8px 10px;">Chat Tag</th>
+                <th style="padding: 8px 10px;">Name Color</th>
+                <th style="padding: 8px 10px;">Chat Color</th>
+                <th style="padding: 8px 10px;">In-Game Live Render</th>
+                <th style="padding: 8px 10px; text-align: right;">Action</th>
+              </tr>
+            </thead>
+            <tbody id="tagsTableBody">
+              <tr><td colspan="6" style="text-align:center; padding:16px; color:var(--text-muted);">Loading tags...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>
+
 
     <!-- TAB 2: Server Hostname & Title -->
     <div id="tab-hostname" class="tab-content">
@@ -1417,7 +2111,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         <div class="card-header">
           <div>
             <div class="card-title">All-in-One MVP Creator & Workshop Deployer</div>
-            <div class="card-desc">Add 1 audio file, choose start point, and the system automatically executes the full chronological pipeline: mastering, KV3 compiling, server deployment, and workshop packaging.</div>
+            <div class="card-desc">Batch queue multiple songs, scrub start timestamps, choose custom MVP durations, and compile/deploy all anthems in one unified pipeline.</div>
           </div>
           <div class="status-badge" style="background:#0a0a0a; border-color:var(--card-border);">
             <span class="status-dot"></span>
@@ -1428,7 +2122,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         <div class="summary-grid" style="margin-bottom: 20px;">
           <div class="summary-card">
             <div class="summary-label">Audio Standard</div>
-            <div class="summary-val" style="font-size:0.82rem; color:#fff;">10.0s Trim | 1.0s Fadeout | 44.1kHz PCM WAV</div>
+            <div class="summary-val" style="font-size:0.82rem; color:#fff;">Custom Durations (5-15s) | 1.0s Fadeout | 44.1kHz PCM WAV</div>
           </div>
           <div class="summary-card">
             <div class="summary-label">Source 2 SoundEvent</div>
@@ -1440,58 +2134,41 @@ HTML_TEMPLATE = """<!DOCTYPE html>
           </div>
         </div>
 
-        <!-- The 1-Step Creator Form -->
-        <div style="background: #040404; border: 1px solid var(--card-border); border-radius: 6px; padding: 18px; margin-bottom: 20px;">
-          <div style="font-size: 0.82rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); margin-bottom: 14px;">
-            1. Select Audio Track & Start Point
+        <!-- MVP Batch Queue Toolbar -->
+        <div class="mvp-queue-toolbar">
+          <div class="mvp-queue-count">
+            <span>MVP Anthems Queue</span>
+            <span class="mvp-queue-badge" id="mvpQueueCountBadge">0 Tracks</span>
           </div>
-
-          <div class="form-group">
-            <label>Source Audio File</label>
-            <div style="display: flex; gap: 8px;">
-              <input type="text" id="mvpAudioPath" placeholder="C:\\path\\to\\song.mp3, .wav, or .ogg" oninput="onMvpFileSelected(this.value)">
-              <button class="btn btn-secondary" style="white-space: nowrap; padding: 0 16px;" onclick="browseMvpFile()">Browse File</button>
-            </div>
-            <div style="font-size: 0.72rem; color: var(--text-muted); margin-top: 4px;">
-              Supports MP3, WAV, OGG, FLAC, M4A. You can browse, paste a path, or drag and drop.
-            </div>
-          </div>
-
-          <div class="input-row">
-            <div class="form-group">
-              <label>MVP Display Name</label>
-              <input type="text" id="mvpDisplayName" placeholder="e.g. Florin Salam - Saint Tropez">
-              <div style="font-size: 0.72rem; color: var(--text-muted); margin-top: 4px;">
-                How this anthem appears in /mvp menu and round-win announcements.
-              </div>
-            </div>
-
-            <div class="form-group">
-              <label>Start Point (Timestamp)</label>
-              <input type="text" id="mvpStartTime" value="00:00:00" placeholder="00:00:00 or 0:45">
-              <div style="font-size: 0.72rem; color: var(--text-muted); margin-top: 4px;">
-                Where the 10-second round MVP song starts.
-              </div>
-            </div>
-          </div>
-
-          <div style="margin-top: 6px; margin-bottom: 16px;">
-            <div style="font-size: 0.72rem; color: var(--text-muted); margin-bottom: 6px;">Quick Start Point Presets:</div>
-            <div class="color-tags-container">
-              <span class="color-tag-pill" onclick="setMvpStartTime('00:00:00')">00:00:00 (Start)</span>
-              <span class="color-tag-pill" onclick="setMvpStartTime('00:00:30')">00:00:30</span>
-              <span class="color-tag-pill" onclick="setMvpStartTime('00:00:45')">00:00:45</span>
-              <span class="color-tag-pill" onclick="setMvpStartTime('00:01:00')">00:01:00</span>
-              <span class="color-tag-pill" onclick="setMvpStartTime('00:01:15')">00:01:15</span>
-              <span class="color-tag-pill" onclick="setMvpStartTime('00:01:30')">00:01:30</span>
-            </div>
-          </div>
-
-          <div style="display: flex; justify-content: flex-end; align-items: center; gap: 12px; margin-top: 10px;">
-            <button class="btn" id="btnRunMvpPipeline" onclick="runMvpPipeline()" style="padding: 12px 28px; font-weight: 700; font-size: 0.88rem;">
-              Process Audio & Deploy Pipeline
+          <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+            <button class="btn btn-sm" style="background:#22c55e; color:#000; font-weight:700;" onclick="browseMvpMultipleFiles()">
+              + Select Audio Files
+            </button>
+            <button class="btn btn-sm btn-secondary" onclick="addBlankTrackToQueue()">
+              + Add Track Manually
+            </button>
+            <button class="btn btn-sm btn-secondary" onclick="clearMvpQueue()">
+              Clear Queue
             </button>
           </div>
+        </div>
+
+        <!-- Track Cards Queue Container -->
+        <div id="mvpQueueContainer">
+          <!-- Populated dynamically by JS -->
+        </div>
+
+        <!-- Master Batch Execution Bar -->
+        <div id="mvpBatchActionBar" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 14px; background: #040404; border: 1px solid var(--card-border); border-radius: 6px; padding: 16px; margin-bottom: 20px;">
+          <div>
+            <div style="font-weight: 700; color: #fff; font-size: 0.9rem;" id="mvpBatchSummaryTitle">0 Anthems Ready to Convert</div>
+            <div style="font-size: 0.74rem; color: var(--text-muted); margin-top: 2px;">
+              Executes mastering, KV3 soundevents update, asset compilation, server registration, and VPK deployment for all queued tracks simultaneously.
+            </div>
+          </div>
+          <button class="btn btn-batch-deploy" id="btnRunMvpBatchPipeline" onclick="runMvpBatchPipeline()">
+            Convert & Deploy All to Server
+          </button>
         </div>
 
         <!-- Chronological Pipeline Stepper Tracker -->
@@ -1546,6 +2223,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 <tr>
                   <th style="padding: 10px 14px;">Kit / Anthem Name</th>
                   <th style="padding: 10px 14px;">SoundEvent Identifier</th>
+                  <th style="padding: 10px 14px;">Duration</th>
                   <th style="padding: 10px 14px;">Binary Resource Path</th>
                   <th style="padding: 10px 14px; text-align: right;">Action</th>
                 </tr>
@@ -1693,6 +2371,47 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     </div>
   </div>
 
+  <!-- Add Custom Tag Modal -->
+  <div class="modal-overlay" id="addTagModal">
+    <div class="modal-card" style="max-width: 480px;">
+      <div class="modal-header">
+        <div class="modal-title">Add Custom Chat Tag</div>
+        <button class="modal-close-btn" onclick="closeAddTagModal()">&times;</button>
+      </div>
+      <div class="modal-body" style="display: flex; flex-direction: column; gap: 12px;">
+        <div>
+          <label style="font-size: 0.72rem; color: var(--text-muted); display: block; margin-bottom: 4px;">Role / Target Key</label>
+          <input type="text" id="newTagKeyInput" placeholder="e.g. #wlz/vip, #supporter, or 76561199123456789" class="form-control" style="font-family: 'JetBrains Mono', monospace;">
+          <div style="font-size: 0.68rem; color: var(--text-muted); margin-top: 3px;">Prefix with '#' for Admin Group, or enter a 17-digit SteamID64 for player-specific tag.</div>
+        </div>
+        <div>
+          <label style="font-size: 0.72rem; color: var(--text-muted); display: block; margin-bottom: 4px;">Chat Tag Text</label>
+          <input type="text" id="newTagTextInput" placeholder="{Gold}[VIP]" class="form-control" oninput="updateNewTagModalPreview()">
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+          <div>
+            <label style="font-size: 0.72rem; color: var(--text-muted); display: block; margin-bottom: 4px;">Player Name Color</label>
+            <input type="text" id="newTagNameColorInput" value="{Gold}" class="form-control" oninput="updateNewTagModalPreview()">
+          </div>
+          <div>
+            <label style="font-size: 0.72rem; color: var(--text-muted); display: block; margin-bottom: 4px;">Chat Text Color</label>
+            <input type="text" id="newTagChatColorInput" value="{White}" class="form-control" oninput="updateNewTagModalPreview()">
+          </div>
+        </div>
+        <div>
+          <label style="font-size: 0.72rem; color: var(--text-muted); display: block; margin-bottom: 4px;">Live In-Game Preview</label>
+          <div class="cs2-hud-chat-box" style="padding: 10px 14px; min-height: 40px;" id="newTagModalPreview">
+            <!-- Rendered in real time -->
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeAddTagModal()">Cancel</button>
+        <button class="btn" onclick="submitAddCustomTag()">Add Tag</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Toast Notification Container -->
   <div class="toast-container" id="toastContainer"></div>
 
@@ -1707,15 +2426,21 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       document.getElementById('terminalLog').innerHTML = 'Log cleared.';
     }
 
-    function switchTab(tabId) {
+    function switchTab(tabId, btn = null) {
       document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
       document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
-      document.getElementById(tabId).classList.add('active');
-      event.target.classList.add('active');
+      const contentEl = document.getElementById(tabId);
+      if (contentEl) contentEl.classList.add('active');
+      const activeBtn = btn || (typeof event !== 'undefined' && event && event.target && event.target.classList && event.target.classList.contains('tab-btn') ? event.target : document.querySelector(`.tab-btn[onclick*="${tabId}"]`));
+      if (activeBtn) activeBtn.classList.add('active');
       if (tabId === 'tab-announcements') loadAnnouncements();
+      if (tabId === 'tab-tags') loadTagsAndStaff();
       if (tabId === 'tab-hostname') loadHostname();
       if (tabId === 'tab-convars') loadConvars();
-      if (tabId === 'tab-mvp') loadMvpList();
+      if (tabId === 'tab-mvp') {
+        loadMvpList();
+        renderMvpQueue();
+      }
       if (tabId === 'tab-services') refreshServices();
     }
 
@@ -1872,19 +2597,442 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
     // CS2 Color Parser
     const CS2_COLORS = {
-      '{Gold}': '#E4AE39',
-      '{LightBlue}': '#5E98D9',
-      '{Green}': '#40FF40',
-      '{LightPurple}': '#D32CE6',
-      '{LightYellow}': '#E5E24D',
-      '{Red}': '#FF4040',
       '{Default}': '#FFFFFF',
       '{White}': '#FFFFFF',
+      '{DarkRed}': '#C42B2B',
+      '{LightPurple}': '#D32CE6',
+      '{Green}': '#40FF40',
+      '{Olive}': '#A2B236',
+      '{Lime}': '#A9FF00',
+      '{Red}': '#FF4040',
       '{Grey}': '#CCCCCC',
-      '{Lime}': '#40FF40',
-      '{Blue}': '#5E98D9',
-      '{Purple}': '#D32CE6'
+      '{Gray}': '#CCCCCC',
+      '{Yellow}': '#FFF200',
+      '{LightYellow}': '#E5E24D',
+      '{Gold}': '#E4AE39',
+      '{Silver}': '#A1A1AA',
+      '{Blue}': '#4D90CD',
+      '{DarkBlue}': '#1E3A8A',
+      '{LightBlue}': '#5E98D9',
+      '{Magenta}': '#EB4B98',
+      '{LightRed}': '#FF6B6B',
+      '{Purple}': '#D32CE6',
+      '{TeamColor}': '#5E98D9'
     };
+
+    const TAG_COLOR_PALETTE = [
+      { tag: '{DarkRed}', hex: '#C42B2B', label: 'Dark Red' },
+      { tag: '{Red}', hex: '#FF4040', label: 'Red' },
+      { tag: '{LightRed}', hex: '#FF6B6B', label: 'Light Red' },
+      { tag: '{Green}', hex: '#40FF40', label: 'Green' },
+      { tag: '{Lime}', hex: '#A9FF00', label: 'Lime' },
+      { tag: '{Olive}', hex: '#A2B236', label: 'Olive' },
+      { tag: '{LightPurple}', hex: '#D32CE6', label: 'Purple' },
+      { tag: '{Gold}', hex: '#E4AE39', label: 'Gold' },
+      { tag: '{Yellow}', hex: '#FFF200', label: 'Yellow' },
+      { tag: '{LightBlue}', hex: '#5E98D9', label: 'Light Blue' },
+      { tag: '{Blue}', hex: '#4D90CD', label: 'Blue' },
+      { tag: '{DarkBlue}', hex: '#1E3A8A', label: 'Dark Blue' },
+      { tag: '{Grey}', hex: '#CCCCCC', label: 'Grey' },
+      { tag: '{White}', hex: '#FFFFFF', label: 'White' },
+      { tag: '{TeamColor}', hex: '#5E98D9', label: 'Team Color' }
+    ];
+
+    let tagsData = {};
+    let staffData = [];
+    let staffAssignments = {};
+    let chatPreviewMode = 'stream';
+    let lastActiveColorInput = null;
+
+    function renderCs2ChatLine(dead, team, tag, nameColor, chatColor, playerName, message) {
+      let full = '';
+      if (dead) full += '{Red}[DEAD] ';
+      if (team === 'ct') full += '{LightBlue}(Counter-Terrorist) ';
+      else if (team === 't') full += '{Gold}(Terrorist) ';
+      if (tag) full += tag + ' ';
+      full += (nameColor || '{White}') + playerName + '{Default}: ' + (chatColor || '{White}') + message;
+      return parseCs2Colors(full);
+    }
+
+    async function loadTagsAndStaff() {
+      log('Fetching chat tags and staff assignments from VPS...');
+      try {
+        const res = await fetch('/api/tags');
+        const data = await res.json();
+        if (data.success) {
+          tagsData = data.tags || {};
+          staffData = data.staff || [];
+          staffAssignments = {};
+          renderStaffList();
+          renderTagsTable();
+          renderChatTagColorPalette();
+          renderChatSimulation();
+          initSandboxRoleSelect();
+          log('Chat tags and staff loaded successfully.');
+        } else {
+          log('[ERROR] Failed to load tags: ' + (data.error || 'Unknown error'));
+        }
+      } catch (e) {
+        log('[ERROR] Error fetching tags: ' + e);
+      }
+    }
+
+    function setChatPreviewMode(mode) {
+      chatPreviewMode = mode;
+      const btnStream = document.getElementById('btnPreviewStream');
+      const btnSandbox = document.getElementById('btnPreviewSandbox');
+      const streamContainer = document.getElementById('cs2ChatStreamContainer');
+      const sandboxContainer = document.getElementById('cs2ChatSandboxContainer');
+
+      if (mode === 'stream') {
+        if (btnStream) btnStream.className = 'btn btn-sm';
+        if (btnSandbox) btnSandbox.className = 'btn btn-sm btn-secondary';
+        if (streamContainer) streamContainer.style.display = 'flex';
+        if (sandboxContainer) sandboxContainer.style.display = 'none';
+        renderChatSimulation();
+      } else {
+        if (btnStream) btnStream.className = 'btn btn-sm btn-secondary';
+        if (btnSandbox) btnSandbox.className = 'btn btn-sm';
+        if (streamContainer) streamContainer.style.display = 'none';
+        if (sandboxContainer) sandboxContainer.style.display = 'flex';
+        updateSandboxPreview();
+      }
+    }
+
+    function renderChatSimulation() {
+      const stream = document.getElementById('cs2ChatStreamContainer');
+      if (!stream) return;
+      stream.innerHTML = '';
+
+      const sampleMessages = [
+        { role: '#wlz/owner', name: 'doggg', dead: false, team: 'all', msg: 'Welcome to talent.walliez.xyz! Type !ws or !mvp.' },
+        { role: '#wlz/admin', name: 'Fiora', dead: false, team: 'ct', msg: 'Competitive MR12 match is live. Have fun and gl hf!' },
+        { role: '#wlz/mod', name: 'Andreea3', dead: false, team: 'all', msg: 'Please keep chat clean and friendly.' },
+        { role: 'Default', name: 'Guest_Player', dead: true, team: 't', msg: "rush B dont stop!" }
+      ];
+
+      for (const [k, tag] of Object.entries(tagsData)) {
+        if (!['#wlz/owner', '#wlz/admin', '#wlz/mod', 'Default'].includes(k)) {
+          sampleMessages.splice(3, 0, {
+            role: k,
+            name: k.startsWith('#') ? k.replace('#wlz/', '').replace('#', '') : 'VIP_Member',
+            dead: false,
+            team: 'all',
+            msg: 'Enjoying custom anthems and skin features!'
+          });
+          break;
+        }
+      }
+
+      sampleMessages.forEach(item => {
+        const tag = tagsData[item.role] || tagsData['Default'] || { ChatTag: '', NameColor: '{White}', ChatColor: '{White}' };
+        const line = document.createElement('div');
+        line.className = 'cs2-chat-line';
+        line.innerHTML = renderCs2ChatLine(item.dead, item.team, tag.ChatTag, tag.NameColor, tag.ChatColor, item.name, item.msg);
+        stream.appendChild(line);
+      });
+    }
+
+    function initSandboxRoleSelect() {
+      const select = document.getElementById('sandboxRoleSelect');
+      if (!select) return;
+      select.innerHTML = '';
+      for (const [k, tag] of Object.entries(tagsData)) {
+        const opt = document.createElement('option');
+        opt.value = k;
+        opt.innerText = `${k} (${tag.ChatTag || 'No Tag'})`;
+        select.appendChild(opt);
+      }
+      updateSandboxPreview();
+    }
+
+    function onSandboxRoleChanged() {
+      const selVal = document.getElementById('sandboxRoleSelect')?.value || 'Default';
+      const nameInput = document.getElementById('sandboxPlayerName');
+      if (nameInput) {
+        if (selVal === '#wlz/owner') nameInput.value = 'doggg';
+        else if (selVal === '#wlz/admin') nameInput.value = 'Fiora';
+        else if (selVal === '#wlz/mod') nameInput.value = 'Andreea3';
+        else if (selVal === 'Default') nameInput.value = 'Player';
+      }
+      updateSandboxPreview();
+    }
+
+    function updateSandboxPreview() {
+      const previewLine = document.getElementById('cs2SandboxPreviewLine');
+      if (!previewLine) return;
+      const roleKey = document.getElementById('sandboxRoleSelect')?.value || 'Default';
+      const tag = tagsData[roleKey] || { ChatTag: '', NameColor: '{White}', ChatColor: '{White}' };
+      const playerName = document.getElementById('sandboxPlayerName')?.value.trim() || 'Player';
+      const msg = document.getElementById('sandboxMessage')?.value.trim() || 'Sample message';
+      const isDead = document.getElementById('sandboxDeadToggle')?.checked || false;
+      const teamVal = document.querySelector('input[name="sandboxTeam"]:checked')?.value || 'all';
+
+      previewLine.innerHTML = renderCs2ChatLine(isDead, teamVal, tag.ChatTag, tag.NameColor, tag.ChatColor, playerName, msg);
+    }
+
+    function renderStaffList() {
+      const container = document.getElementById('staffListContainer');
+      if (!container) return;
+      if (!staffData || staffData.length === 0) {
+        container.innerHTML = '<div style="color: var(--text-muted); font-size: 0.8rem; padding: 12px; text-align: center;">No staff members configured in admins.json.</div>';
+        return;
+      }
+
+      container.innerHTML = staffData.map(s => {
+        const activeTag = tagsData[s.active_tag_key] || { ChatTag: '', NameColor: '{White}', ChatColor: '{White}' };
+        const cleanName = s.name.split(' / ')[0];
+        const previewHtml = renderCs2ChatLine(false, 'all', activeTag.ChatTag, activeTag.NameColor, activeTag.ChatColor, cleanName, 'Online');
+
+        if (s.has_overlap) {
+          const optionsHtml = s.matching_tag_groups.map(g => {
+            const t = tagsData[g];
+            const tagPreview = t ? ` (${t.ChatTag})` : '';
+            return `<option value="${g}" ${s.active_tag_key === g ? 'selected' : ''}>${g}${tagPreview}</option>`;
+          }).join('');
+
+          return `
+            <div class="staff-card has-overlap" id="staffCard-${s.identity}">
+              <div style="flex: 1; min-width: 220px;">
+                <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                  <span style="font-weight: 600; color: #ffffff; font-size: 0.84rem;">${s.name}</span>
+                  <span style="background: rgba(234, 179, 8, 0.15); color: #eab308; border: 1px solid rgba(234, 179, 8, 0.35); border-radius: 4px; padding: 2px 7px; font-size: 0.68rem; font-weight: 600;">
+                    Overlap Detected (${s.groups.join(', ')})
+                  </span>
+                </div>
+                <div style="font-family: 'JetBrains Mono', monospace; font-size: 0.70rem; color: var(--text-muted); margin-top: 3px;">
+                  SteamID: ${s.identity} &bull; Immunity: ${s.immunity}
+                </div>
+              </div>
+              <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+                <div>
+                  <div style="font-size: 0.68rem; color: var(--text-muted); margin-bottom: 3px;">Choose Active Staff Tag:</div>
+                  <select class="form-control" style="height: 30px; font-size: 0.74rem; width: 190px;" onchange="onStaffAssignmentChanged('${s.identity}', this.value)">
+                    ${optionsHtml}
+                  </select>
+                </div>
+                <div class="cs2-hud-chat-box" style="padding: 6px 10px; min-width: 160px; height: 32px; display: flex; align-items: center;" id="staffPreview-${s.identity}">
+                  <span class="cs2-chat-line">${previewHtml}</span>
+                </div>
+              </div>
+            </div>
+          `;
+        } else {
+          return `
+            <div class="staff-card" id="staffCard-${s.identity}">
+              <div style="flex: 1; min-width: 220px;">
+                <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                  <span style="font-weight: 600; color: #ffffff; font-size: 0.84rem;">${s.name}</span>
+                  <span class="tag-badge" style="color: #a1a1aa;">${s.groups[0] || 'Default'}</span>
+                </div>
+                <div style="font-family: 'JetBrains Mono', monospace; font-size: 0.70rem; color: var(--text-muted); margin-top: 3px;">
+                  SteamID: ${s.identity} &bull; Immunity: ${s.immunity}
+                </div>
+              </div>
+              <div class="cs2-hud-chat-box" style="padding: 6px 10px; min-width: 160px; height: 32px; display: flex; align-items: center;">
+                <span class="cs2-chat-line">${previewHtml}</span>
+              </div>
+            </div>
+          `;
+        }
+      }).join('');
+    }
+
+    function onStaffAssignmentChanged(identity, chosenGroup) {
+      staffAssignments[identity] = chosenGroup;
+      const staffMember = staffData.find(s => s.identity === identity);
+      if (staffMember) {
+        staffMember.active_tag_key = chosenGroup;
+        const activeTag = tagsData[chosenGroup] || { ChatTag: '', NameColor: '{White}', ChatColor: '{White}' };
+        const cleanName = staffMember.name.split(' / ')[0];
+        const previewEl = document.getElementById(`staffPreview-${identity}`);
+        if (previewEl) {
+          previewEl.innerHTML = `<span class="cs2-chat-line">${renderCs2ChatLine(false, 'all', activeTag.ChatTag, activeTag.NameColor, activeTag.ChatColor, cleanName, 'Online')}</span>`;
+        }
+      }
+      renderChatSimulation();
+      showToast(`Selected "${chosenGroup}" as active tag for staff member.`, 'info');
+    }
+
+    function renderTagsTable() {
+      const tbody = document.getElementById('tagsTableBody');
+      if (!tbody) return;
+      tbody.innerHTML = '';
+
+      for (const [k, tag] of Object.entries(tagsData)) {
+        const safeKey = k.replace(/[^a-zA-Z0-9]/g, '_');
+        const tr = document.createElement('tr');
+        tr.style.borderBottom = '1px solid var(--card-border)';
+        const isDefault = (k === 'Default');
+
+        const liveRender = renderCs2ChatLine(false, 'all', tag.ChatTag, tag.NameColor, tag.ChatColor, 'Player', 'Example text');
+
+        tr.innerHTML = `
+          <td style="padding: 8px 10px; font-family: 'JetBrains Mono', monospace; font-weight: 600; color: #fff;">
+            ${k}
+          </td>
+          <td style="padding: 8px 10px;">
+            <input type="text" value="${tag.ChatTag || ''}" class="form-control" style="width: 140px; height: 28px; font-size: 0.74rem;" 
+              onfocus="lastActiveColorInput = this" oninput="onTagFieldChanged('${k}', 'ChatTag', this.value)">
+          </td>
+          <td style="padding: 8px 10px;">
+            <input type="text" value="${tag.NameColor || ''}" class="form-control" style="width: 110px; height: 28px; font-size: 0.74rem;" 
+              onfocus="lastActiveColorInput = this" oninput="onTagFieldChanged('${k}', 'NameColor', this.value)">
+          </td>
+          <td style="padding: 8px 10px;">
+            <input type="text" value="${tag.ChatColor || ''}" class="form-control" style="width: 110px; height: 28px; font-size: 0.74rem;" 
+              onfocus="lastActiveColorInput = this" oninput="onTagFieldChanged('${k}', 'ChatColor', this.value)">
+          </td>
+          <td style="padding: 8px 10px;">
+            <div class="cs2-chat-line" id="tagRowPreview-${safeKey}">${liveRender}</div>
+          </td>
+          <td style="padding: 8px 10px; text-align: right;">
+            ${isDefault ? '<span style="font-size: 0.70rem; color: var(--text-muted);">Default</span>' : `<button class="btn btn-sm btn-danger" onclick="deleteChatTag('${k}')">Delete</button>`}
+          </td>
+        `;
+        tbody.appendChild(tr);
+      }
+    }
+
+    function onTagFieldChanged(key, field, value) {
+      if (!tagsData[key]) tagsData[key] = {};
+      tagsData[key][field] = value;
+
+      const safeKey = key.replace(/[^a-zA-Z0-9]/g, '_');
+      const previewEl = document.getElementById(`tagRowPreview-${safeKey}`);
+      if (previewEl) {
+        const tag = tagsData[key];
+        previewEl.innerHTML = renderCs2ChatLine(false, 'all', tag.ChatTag, tag.NameColor, tag.ChatColor, 'Player', 'Example text');
+      }
+
+      renderStaffList();
+      renderChatSimulation();
+      updateSandboxPreview();
+    }
+
+    function renderChatTagColorPalette() {
+      const container = document.getElementById('chatTagColorPalette');
+      if (!container) return;
+      container.innerHTML = TAG_COLOR_PALETTE.map(c => `
+        <div class="color-chip" onclick="insertColorTag('${c.tag}')" title="Insert ${c.tag}">
+          <span class="color-chip-swatch" style="background: ${c.hex};"></span>
+          <span>${c.tag}</span>
+        </div>
+      `).join('');
+    }
+
+    function insertColorTag(tag) {
+      if (lastActiveColorInput) {
+        lastActiveColorInput.value += tag;
+        lastActiveColorInput.dispatchEvent(new Event('input'));
+        lastActiveColorInput.focus();
+        showToast(`Inserted ${tag}`, 'info');
+      } else {
+        showToast('Click an input first, then click a color pill.', 'info');
+      }
+    }
+
+    async function saveAllTagsAndStaff() {
+      log('Saving chat tags and staff assignments to VPS...');
+      showToast('Saving and hot-reloading tags...', 'info');
+      try {
+        const res = await fetch('/api/tags/save', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tags: tagsData, staff_assignments: staffAssignments })
+        });
+        const out = await res.json();
+        if (out.success) {
+          log('[OK] ' + (out.message || 'Tags saved.'));
+          showToast('Chat tags & staff assignments saved and reloaded in CS2!', 'success');
+          loadTagsAndStaff();
+        } else {
+          log('[ERROR] Failed to save tags: ' + out.error);
+          showToast('Save error: ' + out.error, 'error');
+        }
+      } catch (e) {
+        log('[ERROR] Network error saving tags: ' + e);
+        showToast('Network error: ' + e, 'error');
+      }
+    }
+
+    function openAddTagModal() {
+      document.getElementById('newTagKeyInput').value = '';
+      document.getElementById('newTagTextInput').value = '{Gold}[VIP]';
+      document.getElementById('newTagNameColorInput').value = '{Gold}';
+      document.getElementById('newTagChatColorInput').value = '{White}';
+      updateNewTagModalPreview();
+      document.getElementById('addTagModal').classList.add('active');
+      document.getElementById('newTagKeyInput').focus();
+    }
+
+    function closeAddTagModal() {
+      document.getElementById('addTagModal').classList.remove('active');
+    }
+
+    function updateNewTagModalPreview() {
+      const tagText = document.getElementById('newTagTextInput')?.value || '';
+      const nameColor = document.getElementById('newTagNameColorInput')?.value || '{White}';
+      const chatColor = document.getElementById('newTagChatColorInput')?.value || '{White}';
+      const previewEl = document.getElementById('newTagModalPreview');
+      if (previewEl) {
+        previewEl.innerHTML = `<span class="cs2-chat-line">${renderCs2ChatLine(false, 'all', tagText, nameColor, chatColor, 'PlayerVIP', 'Hello server!')}</span>`;
+      }
+    }
+
+    async function submitAddCustomTag() {
+      const key = document.getElementById('newTagKeyInput').value.trim();
+      const chatTag = document.getElementById('newTagTextInput').value.trim();
+      const nameColor = document.getElementById('newTagNameColorInput').value.trim() || '{White}';
+      const chatColor = document.getElementById('newTagChatColorInput').value.trim() || '{White}';
+
+      if (!key) {
+        showToast('Please specify a role key or SteamID.', 'error');
+        return;
+      }
+      if (!chatTag) {
+        showToast('Please enter the tag text (e.g. {Gold}[VIP]).', 'error');
+        return;
+      }
+
+      tagsData[key] = {
+        ChatTag: chatTag,
+        NameColor: nameColor,
+        ChatColor: chatColor
+      };
+
+      closeAddTagModal();
+      await saveAllTagsAndStaff();
+    }
+
+    function deleteChatTag(key) {
+      openConfirmModal(
+        'Delete Chat Tag',
+        `Are you sure you want to remove the chat tag for "${key}"?`,
+        async () => {
+          log(`Deleting tag: ${key}...`);
+          try {
+            const res = await fetch('/api/tags/delete', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ key: key })
+            });
+            const out = await res.json();
+            if (out.success) {
+              showToast(`Tag "${key}" removed.`, 'success');
+              log(`[OK] Deleted tag ${key}`);
+              loadTagsAndStaff();
+            } else {
+              showToast(`Error deleting tag: ${out.error}`, 'error');
+            }
+          } catch (e) {
+            showToast('Delete error: ' + e, 'error');
+          }
+        },
+        'Delete Tag',
+        true
+      );
+    }
 
     function parseCs2Colors(text) {
       let html = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -2144,10 +3292,23 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       try {
         const res = await fetch('/api/status');
         const data = await res.json();
-        document.getElementById('headerStatusText').innerText = data.online ? `Online (${data.players}/${data.max_players})` : 'Offline';
-        document.getElementById('statCs2Status').innerText = data.online ? `Active (${data.map})` : 'Stopped';
-        document.getElementById('statCs2Status').style.color = data.online ? '#22c55e' : '#ef4444';
-      } catch (e) {}
+        const headerStatusText = document.getElementById('headerStatusText');
+        const dot = document.querySelector('#headerStatusBadge .status-dot');
+        if (headerStatusText) {
+          headerStatusText.innerText = data.online ? `Online (${data.players}/${data.max_players})` : 'Offline';
+        }
+        if (dot) {
+          dot.style.background = data.online ? '#22c55e' : '#ef4444';
+          dot.style.boxShadow = data.online ? '0 0 8px rgba(34, 197, 94, 0.7)' : '0 0 8px rgba(239, 68, 68, 0.7)';
+        }
+        const statCs2 = document.getElementById('statCs2Status');
+        if (statCs2) {
+          statCs2.innerText = data.online ? `Active (${data.map})` : 'Stopped';
+          statCs2.style.color = data.online ? '#22c55e' : '#ef4444';
+        }
+      } catch (e) {
+        console.error('refreshServices error:', e);
+      }
     }
 
     async function triggerClientSync() {
@@ -2204,8 +3365,13 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       try {
         const res = await fetch('/api/launch_workshop_tools', { method: 'POST' });
         const out = await res.json();
-        log(out.message || 'CS2 Tools started.');
-        showToast('CS2 Workshop Tools launched.', 'info');
+        if (out.success) {
+          log(out.message || 'CS2 Tools started.');
+          showToast('CS2 Workshop Tools launched successfully.', 'success');
+        } else {
+          log('[ERROR] Failed starting CS2 tools: ' + (out.error || 'Unknown'));
+          showToast('Failed to start CS2 tools: ' + (out.error || 'Unknown'), 'error');
+        }
       } catch (e) {
         log('[ERROR] Error starting CS2 tools: ' + e);
         showToast('Error starting tools: ' + e, 'error');
@@ -2216,14 +3382,14 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       openConvertModal();
     }
 
-    // All-in-One MVP Pipeline
+    // All-in-One MVP Pipeline Definition
     const PIPELINE_STEPS = [
-      { id: 1, title: 'Trim & Master Audio (10s PCM WAV)', desc: '10.0s trim from start point with 1s fadeout at 44.1kHz 16-bit PCM WAV' },
-      { id: 2, title: 'Generate Soundevents KV3 Definition', desc: 'Registers CustomMVP.{id} in soundevents_addon.vsndevts for Source 2 audio' },
-      { id: 3, title: 'Compile Assets with resourcecompiler.exe', desc: 'Compiles audio to binary .vsnd_c and soundevents to .vsndevts_c' },
-      { id: 4, title: 'Register in Server MVP_Settings.json', desc: 'Activates /mvp WASD menu selection, preview, and round-win announcements' },
-      { id: 5, title: 'Pack & Deploy Workshop VPK Cache', desc: 'Builds Valve VPK and synchronizes to server linux workshop directories' },
-      { id: 6, title: 'Synchronize Local CS2 Game Files', desc: 'Syncs compiled anthem into your local Steam Counter-Strike 2 directory' },
+      { id: 1, title: 'Trim & Master All Audio Tracks (PCM WAV)', desc: 'Masters all queued tracks to custom durations with 1.0s fadeout at 44.1kHz 16-bit PCM WAV' },
+      { id: 2, title: 'Generate Soundevents KV3 Definition', desc: 'Registers all CustomMVP.{id} entries in soundevents_addon.vsndevts for Source 2 audio' },
+      { id: 3, title: 'Compile Assets with resourcecompiler.exe', desc: 'Compiles audio to binary .vsnd_c and soundevents to .vsndevts_c for all tracks' },
+      { id: 4, title: 'Register in Server MVP_Settings.json', desc: 'Registers kits in server database with custom Message_Center_Bottom_InSecs durations' },
+      { id: 5, title: 'Pack & Deploy Workshop VPK Cache', desc: 'Builds Valve VPK with all assets and synchronizes to server linux workshop directories' },
+      { id: 6, title: 'Synchronize Local CS2 Game Files', desc: 'Syncs all compiled anthems into your local Steam Counter-Strike 2 directory' },
       { id: 7, title: 'Ready for Workshop Pack Update', desc: 'Addon pack wlzMVP is fully built and ready to be pushed to Steam' }
     ];
 
@@ -2263,64 +3429,579 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       }
     }
 
-    function setMvpStartTime(val) {
-      document.getElementById('mvpStartTime').value = val;
+    // =========================================================================
+    // MVP BATCH QUEUE & MINIMALIST VINYL AUDIO ENGINE
+    // =========================================================================
+    let mvpQueue = [];
+    let activeAudioTrackId = null;
+    let previewCutTimer = null;
+
+    function formatTimeDisplay(secs) {
+      if (isNaN(secs) || secs < 0) secs = 0;
+      const m = Math.floor(secs / 60);
+      const s = Math.floor(secs % 60);
+      const ds = Math.floor((secs % 1) * 10);
+      return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${ds}`;
     }
 
-    function onMvpFileSelected(path) {
-      if (!path) return;
-      const cleanPath = path.trim().replace(/^["']|["']$/g, '');
-      const parts = cleanPath.split(/[/\\]/);
+    function parseTimeSeconds(timeStr) {
+      if (!timeStr) return 0;
+      const parts = timeStr.toString().trim().split(':');
+      if (parts.length === 3) {
+        return parseInt(parts[0]) * 3600 + parseInt(parts[1]) * 60 + parseFloat(parts[2]);
+      } else if (parts.length === 2) {
+        return parseInt(parts[0]) * 60 + parseFloat(parts[1]);
+      }
+      return parseFloat(timeStr) || 0;
+    }
+
+    function formatSecondsToTimestamp(secs) {
+      const s = Math.floor(secs);
+      const m = Math.floor(s / 60);
+      const remS = s % 60;
+      return `00:${String(m).padStart(2, '0')}:${String(remS).padStart(2, '0')}`;
+    }
+
+    function sanitizeIdString(text) {
+      return (text || '').toLowerCase().replace(/[^a-z0-9_]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '') || 'custom_mvp';
+    }
+
+    function createQueueTrack(audioPath = '') {
+      const id = 'trk_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
+      const cleanPath = (audioPath || '').trim().replace(/^["']|["']$/g, '');
+      const parts = cleanPath.split(String.fromCharCode(92)).join('/').split('/');
       const filename = parts[parts.length - 1];
       const dotIdx = filename.lastIndexOf('.');
       const baseName = dotIdx !== -1 ? filename.substring(0, dotIdx) : filename;
-      const formattedName = baseName.replace(/[_-]/g, ' ').split(' ').map(w => w ? w.charAt(0).toUpperCase() + w.slice(1) : '').join(' ');
-      const nameInput = document.getElementById('mvpDisplayName');
-      if (nameInput && (!nameInput.value || nameInput.dataset.autoFilled === "true")) {
-        nameInput.value = formattedName;
-        nameInput.dataset.autoFilled = "true";
+      const formattedName = baseName ? baseName.replace(/[_-]/g, ' ').split(' ').map(w => w ? w.charAt(0).toUpperCase() + w.slice(1) : '').join(' ') : 'New MVP Anthem';
+      const cleanId = sanitizeIdString(baseName || 'mvp_track');
+
+      return {
+        id: id,
+        audio_path: cleanPath,
+        display_name: formattedName,
+        clean_id: cleanId,
+        start_time: '00:00:00',
+        start_seconds: 0,
+        duration: 10.0,
+        audio_duration: 180.0, // default until loaded
+        audio_element: null,
+        is_playing: false,
+        is_preview_cut: false,
+        bars: generateProceduralWaveBars(64)
+      };
+    }
+
+    function generateProceduralWaveBars(count) {
+      const bars = [];
+      for (let i = 0; i < count; i++) {
+        // Natural audio envelope pattern (intro, builds up, energetic drops)
+        const envelope = Math.sin((i / count) * Math.PI);
+        const rand = 0.35 + Math.random() * 0.65;
+        const h = Math.max(15, Math.min(100, Math.round(envelope * rand * 100)));
+        bars.push(h);
+      }
+      return bars;
+    }
+
+    async function browseMvpMultipleFiles() {
+      try {
+        const res = await fetch('/api/browse_audio_files', { method: 'POST' });
+        const data = await res.json();
+        if (data.paths && data.paths.length > 0) {
+          data.paths.forEach(p => {
+            mvpQueue.push(createQueueTrack(p));
+          });
+          renderMvpQueue();
+          showToast(`Added ${data.paths.length} audio file(s) to MVP queue.`, 'info');
+        } else if (data.path) {
+          mvpQueue.push(createQueueTrack(data.path));
+          renderMvpQueue();
+          showToast('Added 1 audio file to MVP queue.', 'info');
+        }
+      } catch (e) {
+        showToast('Error opening audio file picker: ' + e, 'error');
       }
     }
 
-    async function browseMvpFile() {
+    function addBlankTrackToQueue() {
+      mvpQueue.push(createQueueTrack(''));
+      renderMvpQueue();
+    }
+
+    function clearMvpQueue() {
+      stopAllAudioPlayback();
+      mvpQueue = [];
+      renderMvpQueue();
+    }
+
+    function removeQueueTrack(id) {
+      stopAllAudioPlayback();
+      mvpQueue = mvpQueue.filter(t => t.id !== id);
+      renderMvpQueue();
+    }
+
+    function updateTrackField(id, field, value) {
+      const track = mvpQueue.find(t => t.id === id);
+      if (!track) return;
+      track[field] = value;
+      if (field === 'audio_path') {
+        const parts = value.trim().split(String.fromCharCode(92)).join('/').split('/');
+        const filename = parts[parts.length - 1];
+        const dotIdx = filename.lastIndexOf('.');
+        const base = dotIdx !== -1 ? filename.substring(0, dotIdx) : filename;
+        if (!track.display_name || track.display_name === 'New MVP Anthem') {
+          track.display_name = base.replace(/[_-]/g, ' ').split(' ').map(w => w ? w.charAt(0).toUpperCase() + w.slice(1) : '').join(' ');
+        }
+        track.clean_id = sanitizeIdString(base);
+        loadAudioForTrack(track);
+      }
+      if (field === 'display_name') {
+        track.clean_id = sanitizeIdString(value);
+      }
+      renderMvpTrackHeader(track);
+    }
+
+    function updateTrackDuration(id, val) {
+      const track = mvpQueue.find(t => t.id === id);
+      if (!track) return;
+      track.duration = parseFloat(val);
+      const valEl = document.getElementById(`durVal-${id}`);
+      if (valEl) valEl.innerText = `${track.duration.toFixed(1)}s`;
+      updateWaveformOverlay(track);
+      updateTimeReadout(track);
+    }
+
+    function updateTrackStartTime(id, secs) {
+      const track = mvpQueue.find(t => t.id === id);
+      if (!track) return;
+      track.start_seconds = Math.max(0, parseFloat(secs) || 0);
+      track.start_time = formatSecondsToTimestamp(track.start_seconds);
+
+      const input = document.getElementById(`startTimeInput-${id}`);
+      if (input) input.value = track.start_time;
+
+      const slider = document.getElementById(`scrubberSlider-${id}`);
+      if (slider && track.audio_duration > 0) {
+        slider.value = track.start_seconds;
+      }
+
+      updateWaveformOverlay(track);
+      updateTimeReadout(track);
+    }
+
+    function setTrackStartPreset(id, presetStr) {
+      const secs = parseTimeSeconds(presetStr);
+      updateTrackStartTime(id, secs);
+    }
+
+    function updateWaveformOverlay(track) {
+      const overlay = document.getElementById(`cutOverlay-${track.id}`);
+      if (!overlay || track.audio_duration <= 0) return;
+
+      const total = track.audio_duration;
+      const leftPct = (track.start_seconds / total) * 100;
+      const widthPct = (track.duration / total) * 100;
+
+      overlay.style.left = `${Math.min(100, leftPct)}%`;
+      overlay.style.width = `${Math.min(100 - leftPct, widthPct)}%`;
+
+      // Highlight bars inside cut window
+      const barContainer = document.getElementById(`waveBars-${track.id}`);
+      if (barContainer) {
+        const bars = barContainer.querySelectorAll('.mvp-wave-bar');
+        const numBars = bars.length;
+        bars.forEach((bar, idx) => {
+          const barPct = (idx / numBars) * 100;
+          if (barPct >= leftPct && barPct <= (leftPct + widthPct)) {
+            bar.classList.add('active-slice');
+          } else {
+            bar.classList.remove('active-slice');
+          }
+        });
+      }
+    }
+
+    function updateTimeReadout(track, currentPlayTime = null) {
+      const readout = document.getElementById(`timeReadout-${track.id}`);
+      if (!readout) return;
+      const cur = currentPlayTime !== null ? currentPlayTime : track.start_seconds;
+      readout.innerText = `${formatTimeDisplay(cur)} / ${formatTimeDisplay(cur + track.duration)}`;
+    }
+
+    function stopAllAudioPlayback() {
+      if (previewCutTimer) {
+        clearTimeout(previewCutTimer);
+        previewCutTimer = null;
+      }
+      mvpQueue.forEach(t => {
+        if (t.audio_element) {
+          try {
+            t.audio_element.pause();
+            t.audio_element.currentTime = t.start_seconds;
+          } catch (e) {}
+        }
+        t.is_playing = false;
+        t.is_preview_cut = false;
+        setVinylSpinningState(t.id, false);
+        updatePlaybackButtonStates(t.id, false);
+      });
+      activeAudioTrackId = null;
+    }
+
+    function setVinylSpinningState(trackId, spinning) {
+      const disc = document.getElementById(`vinylDisc-${trackId}`);
+      if (disc) {
+        if (spinning) disc.classList.add('spinning');
+        else disc.classList.remove('spinning');
+      }
+    }
+
+    function updatePlaybackButtonStates(trackId, isPlaying) {
+      const btn = document.getElementById(`btnPlayFull-${trackId}`);
+      if (btn) {
+        btn.innerHTML = isPlaying ? '⏸ Pause' : '▶ Play Full';
+      }
+    }
+
+    function loadAudioForTrack(track) {
+      if (!track.audio_path) return;
+      if (!track.audio_element) {
+        track.audio_element = new Audio();
+      }
+      const streamUrl = `/api/audio_stream?path=${encodeURIComponent(track.audio_path)}`;
+      track.audio_element.src = streamUrl;
+      track.audio_element.onloadedmetadata = () => {
+        if (track.audio_element.duration && !isNaN(track.audio_element.duration)) {
+          track.audio_duration = track.audio_element.duration;
+          const slider = document.getElementById(`scrubberSlider-${track.id}`);
+          if (slider) {
+            slider.max = track.audio_duration;
+          }
+          updateWaveformOverlay(track);
+          updateTimeReadout(track);
+        }
+      };
+      track.audio_element.ontimeupdate = () => {
+        if (track.is_playing && !track.is_preview_cut) {
+          updateTimeReadout(track, track.audio_element.currentTime);
+          const slider = document.getElementById(`scrubberSlider-${track.id}`);
+          if (slider) slider.value = track.audio_element.currentTime;
+        }
+      };
+      track.audio_element.onended = () => {
+        stopAllAudioPlayback();
+      };
+    }
+
+    function togglePlayMaster(trackId) {
+      const track = mvpQueue.find(t => t.id === trackId);
+      if (!track || !track.audio_path) {
+        showToast('Please select a valid audio file first.', 'error');
+        return;
+      }
+
+      if (track.is_playing && !track.is_preview_cut) {
+        stopAllAudioPlayback();
+        return;
+      }
+
+      stopAllAudioPlayback();
+      loadAudioForTrack(track);
+
+      try {
+        track.audio_element.currentTime = track.start_seconds;
+        track.audio_element.volume = 0.85;
+        track.audio_element.play().then(() => {
+          track.is_playing = true;
+          track.is_preview_cut = false;
+          activeAudioTrackId = trackId;
+          setVinylSpinningState(trackId, true);
+          updatePlaybackButtonStates(trackId, true);
+        }).catch(err => {
+          showToast('Audio playback error: ' + err, 'error');
+        });
+      } catch (e) {
+        showToast('Playback error: ' + e, 'error');
+      }
+    }
+
+    function previewMvpCut(trackId) {
+      const track = mvpQueue.find(t => t.id === trackId);
+      if (!track || !track.audio_path) {
+        showToast('Please select a valid audio file first.', 'error');
+        return;
+      }
+
+      stopAllAudioPlayback();
+      loadAudioForTrack(track);
+
+      try {
+        track.audio_element.currentTime = track.start_seconds;
+        track.audio_element.volume = 0.85;
+        track.audio_element.play().then(() => {
+          track.is_playing = true;
+          track.is_preview_cut = true;
+          activeAudioTrackId = trackId;
+          setVinylSpinningState(trackId, true);
+          updatePlaybackButtonStates(trackId, true);
+
+          // Simulate in-game 1s audio fadeout at duration - 1s
+          const fadeStartMs = Math.max(0, (track.duration - 1.0) * 1000);
+          const totalMs = track.duration * 1000;
+
+          // Fadeout timer
+          setTimeout(() => {
+            if (activeAudioTrackId === trackId && track.is_playing && track.audio_element) {
+              let vol = 0.85;
+              const stepInterval = setInterval(() => {
+                vol -= 0.085;
+                if (vol <= 0 || !track.is_playing) {
+                  clearInterval(stepInterval);
+                } else if (track.audio_element) {
+                  track.audio_element.volume = Math.max(0, vol);
+                }
+              }, 100);
+            }
+          }, fadeStartMs);
+
+          // Stop timer
+          previewCutTimer = setTimeout(() => {
+            if (activeAudioTrackId === trackId) {
+              stopAllAudioPlayback();
+            }
+          }, totalMs);
+
+        }).catch(err => {
+          showToast('Audio preview error: ' + err, 'error');
+        });
+      } catch (e) {
+        showToast('Preview error: ' + e, 'error');
+      }
+    }
+
+    function renderMvpTrackHeader(track) {
+      const card = document.getElementById(`trackCard-${track.id}`);
+      if (!card) return;
+      const hudName = card.querySelector('.hud-track-name');
+      if (hudName) hudName.innerText = track.display_name || 'Anthem';
+      const eventBadge = card.querySelector('.mvp-pill-event');
+      if (eventBadge) eventBadge.innerText = `CustomMVP.${track.clean_id}`;
+    }
+
+    function renderMvpQueue() {
+      const container = document.getElementById('mvpQueueContainer');
+      const countBadge = document.getElementById('mvpQueueCountBadge');
+      const summaryTitle = document.getElementById('mvpBatchSummaryTitle');
+      const deployBtn = document.getElementById('btnRunMvpBatchPipeline');
+
+      if (!container) return;
+
+      const n = mvpQueue.length;
+      if (countBadge) countBadge.innerText = `${n} Track${n === 1 ? '' : 's'}`;
+      if (summaryTitle) summaryTitle.innerText = `${n} Anthem${n === 1 ? '' : 's'} Ready to Convert`;
+      if (deployBtn) {
+        deployBtn.innerText = `Convert & Deploy All to Server (${n} Tracks)`;
+        deployBtn.disabled = n === 0;
+      }
+
+      if (n === 0) {
+        container.innerHTML = `
+          <div style="text-align: center; padding: 36px 20px; border: 1px dashed var(--card-border); border-radius: 8px; background: #020202; margin-bottom: 20px;">
+            <div style="font-size: 0.95rem; font-weight: 600; color: #ededed; margin-bottom: 6px;">MVP Queue is Empty</div>
+            <div style="font-size: 0.78rem; color: var(--text-muted); margin-bottom: 16px;">
+              Click "+ Select Audio Files" to choose multiple audio files (.mp3, .wav, .flac) at once, or add a track manually.
+            </div>
+            <button class="btn btn-sm" style="background:#22c55e; color:#000; font-weight:700;" onclick="browseMvpMultipleFiles()">
+              + Select Audio Files
+            </button>
+          </div>
+        `;
+        return;
+      }
+
+      container.innerHTML = mvpQueue.map(track => `
+        <div class="mvp-track-card" id="trackCard-${track.id}">
+          <!-- Top Row: Vinyl + Info & Badges + HUD + Time -->
+          <div class="mvp-card-top">
+            <!-- Vinyl Record Sleeve Widget -->
+            <div class="mvp-vinyl-jacket" onclick="togglePlayMaster('${track.id}')" title="Click to Play/Pause">
+              <div class="mvp-vinyl-disc" id="vinylDisc-${track.id}">
+                <div class="mvp-vinyl-center">
+                  <div class="mvp-vinyl-play-icon"></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Track Info & Controls -->
+            <div class="mvp-track-info">
+              <div class="mvp-track-badges">
+                <span class="mvp-pill mvp-pill-green">★ READY TO CONVERT</span>
+                <span class="mvp-pill mvp-pill-subtle">SOURCE 2 VSND • 44.1kHz</span>
+                <span class="mvp-pill mvp-pill-event">CustomMVP.${track.clean_id}</span>
+              </div>
+
+              <!-- Editable Display Name -->
+              <input type="text" class="mvp-title-input" value="${track.display_name}" placeholder="Track Title / Artist - Song"
+                     oninput="updateTrackField('${track.id}', 'display_name', this.value)">
+
+              <!-- In-Game Round HUD Preview Box -->
+              <div class="mvp-hud-box">
+                <span class="mvp-hud-tag">IN-GAME HUD</span>
+                <span>★ <strong>doggg</strong> is MVP of the Round! Playing <strong class="hud-track-name" style="color:#fff;">${track.display_name}</strong></span>
+              </div>
+            </div>
+
+            <!-- Top Right: Readout & Delete -->
+            <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 8px;">
+              <div class="mvp-time-readout" id="timeReadout-${track.id}">
+                ${formatTimeDisplay(track.start_seconds)} / ${formatTimeDisplay(track.start_seconds + track.duration)}
+              </div>
+              <button class="btn btn-sm" style="background:transparent; border:1px solid #27272a; color:#ef4444; font-size:0.7rem; padding:2px 8px;"
+                      onclick="removeQueueTrack('${track.id}')">
+                Remove
+              </button>
+            </div>
+          </div>
+
+          <!-- Audio File Path Row -->
+          <div style="display: flex; gap: 8px; align-items: center;">
+            <input type="text" style="font-size: 0.74rem; font-family: 'JetBrains Mono', monospace; padding: 6px 10px; background:#010101;"
+                   placeholder="C:\\path\\to\\anthem.mp3" value="${track.audio_path}"
+                   onchange="updateTrackField('${track.id}', 'audio_path', this.value)">
+            <button class="btn btn-sm btn-secondary" style="white-space:nowrap; padding:6px 12px;"
+                    onclick="browseTrackAudioPath('${track.id}')">
+              Browse
+            </button>
+          </div>
+
+          <!-- Waveform Visualizer & Cut Region Scrubber -->
+          <div>
+            <div class="mvp-waveform-wrap" onclick="onWaveformClicked(event, '${track.id}')">
+              <div class="mvp-cut-overlay" id="cutOverlay-${track.id}"></div>
+              <div class="mvp-waveform-bars" id="waveBars-${track.id}">
+                ${track.bars.map(h => `<div class="mvp-wave-bar" style="height:${h}%;"></div>`).join('')}
+              </div>
+            </div>
+
+            <!-- Minimal Scrubber Slider (Image 2 style white thumb) -->
+            <div class="mvp-slider-track-wrap">
+              <input type="range" class="mvp-scrubber-slider" id="scrubberSlider-${track.id}"
+                     min="0" max="${track.audio_duration}" step="0.5" value="${track.start_seconds}"
+                     oninput="updateTrackStartTime('${track.id}', this.value)">
+            </div>
+          </div>
+
+          <!-- Bottom Control Bar -->
+          <div class="mvp-controls-row">
+            <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+              <button class="mvp-btn-playback" id="btnPlayFull-${track.id}" onclick="togglePlayMaster('${track.id}')">
+                ▶ Play Full
+              </button>
+              <button class="mvp-btn-playback" style="background:#111; border-color:#22c55e; color:#22c55e;" onclick="previewMvpCut('${track.id}')">
+                ▶ Preview MVP Cut
+              </button>
+            </div>
+
+            <!-- Start Time Input & Presets -->
+            <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
+              <span style="font-size: 0.72rem; color: var(--text-muted);">Start:</span>
+              <input type="text" id="startTimeInput-${track.id}" value="${track.start_time}"
+                     style="width: 74px; font-size: 0.74rem; font-family: 'JetBrains Mono', monospace; text-align: center; padding: 4px;"
+                     onchange="setTrackStartPreset('${track.id}', this.value)">
+              <div class="color-tags-container" style="display:inline-flex; gap:4px; margin:0;">
+                <span class="color-tag-pill" style="font-size:0.65rem; padding:2px 6px;" onclick="setTrackStartPreset('${track.id}', '00:00:00')">00:00</span>
+                <span class="color-tag-pill" style="font-size:0.65rem; padding:2px 6px;" onclick="setTrackStartPreset('${track.id}', '00:00:30')">00:30</span>
+                <span class="color-tag-pill" style="font-size:0.65rem; padding:2px 6px;" onclick="setTrackStartPreset('${track.id}', '00:00:45')">00:45</span>
+                <span class="color-tag-pill" style="font-size:0.65rem; padding:2px 6px;" onclick="setTrackStartPreset('${track.id}', '00:01:00')">01:00</span>
+              </div>
+            </div>
+
+            <!-- MVP Duration Slider (5s to 15s) -->
+            <div class="mvp-duration-control">
+              <span class="mvp-dur-label">MVP Duration:</span>
+              <input type="range" class="mvp-dur-slider" min="5" max="15" step="0.5" value="${track.duration}"
+                     oninput="updateTrackDuration('${track.id}', this.value)">
+              <span class="mvp-dur-val" id="durVal-${track.id}">${track.duration.toFixed(1)}s</span>
+            </div>
+          </div>
+        </div>
+      `).join('');
+
+      // Post-render init: Load audio metadata & initialize overlays
+      mvpQueue.forEach(track => {
+        loadAudioForTrack(track);
+        updateWaveformOverlay(track);
+      });
+    }
+
+    function onWaveformClicked(e, trackId) {
+      const track = mvpQueue.find(t => t.id === trackId);
+      if (!track || track.audio_duration <= 0) return;
+      const rect = e.currentTarget.getBoundingClientRect();
+      const clickX = e.clientX - rect.left;
+      const pct = Math.max(0, Math.min(1, clickX / rect.width));
+      const secs = pct * track.audio_duration;
+      updateTrackStartTime(trackId, secs);
+    }
+
+    async function browseTrackAudioPath(trackId) {
       try {
         const res = await fetch('/api/browse_audio_file', { method: 'POST' });
         const data = await res.json();
         if (data.path) {
-          document.getElementById('mvpAudioPath').value = data.path;
-          onMvpFileSelected(data.path);
+          updateTrackField(trackId, 'audio_path', data.path);
         }
       } catch (e) {
-        showToast('Error opening file dialog: ' + e, 'error');
+        showToast('Error selecting audio file: ' + e, 'error');
       }
     }
 
-    async function runMvpPipeline() {
-      const audioPath = document.getElementById('mvpAudioPath').value.trim();
-      const displayName = document.getElementById('mvpDisplayName').value.trim();
-      const startTime = document.getElementById('mvpStartTime').value.trim() || '00:00:00';
-
-      if (!audioPath) {
-        showToast('Please provide an audio file path or click Browse.', 'error');
+    // =========================================================================
+    // BATCH PIPELINE EXECUTION
+    // =========================================================================
+    async function runMvpBatchPipeline() {
+      if (mvpQueue.length === 0) {
+        showToast('Your queue is empty! Add at least 1 track before running the pipeline.', 'error');
         return;
       }
+
+      // Check if all tracks have valid paths
+      const invalid = mvpQueue.filter(t => !t.audio_path);
+      if (invalid.length > 0) {
+        showToast(`Please specify audio files for all ${invalid.length} queue item(s).`, 'error');
+        return;
+      }
+
+      stopAllAudioPlayback();
 
       initPipelineStepsUI();
       document.getElementById('mvpPipelineTracker').style.display = 'block';
       document.getElementById('workshopReadyBanner').style.display = 'none';
-      document.getElementById('pipelineOverallStatus').innerText = 'Executing Pipeline...';
+      document.getElementById('pipelineOverallStatus').innerText = `Processing Batch Pipeline (${mvpQueue.length} Tracks)...`;
       document.getElementById('pipelineOverallStatus').style.color = 'var(--gold)';
-      const btn = document.getElementById('btnRunMvpPipeline');
-      btn.disabled = true;
-      btn.innerText = 'Processing Pipeline...';
 
-      log(`[MVP] Starting All-in-One Pipeline for "${displayName || audioPath}"...`);
+      const btn = document.getElementById('btnRunMvpBatchPipeline');
+      btn.disabled = true;
+      btn.innerText = `Executing Pipeline (${mvpQueue.length} Tracks)...`;
+
+      log(`[MVP BATCH] Starting Pipeline for ${mvpQueue.length} tracks...`);
+
+      const payload = {
+        tracks: mvpQueue.map(t => ({
+          audio_path: t.audio_path,
+          display_name: t.display_name,
+          start_time: t.start_time,
+          duration: t.duration,
+          clean_id: t.clean_id
+        }))
+      };
 
       try {
         const res = await fetch('/api/mvp/pipeline', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ audio_path: audioPath, display_name: displayName, start_time: startTime })
+          body: JSON.stringify(payload)
         });
 
         const reader = res.body.getReader();
@@ -2332,7 +4013,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
           const { done, value } = await reader.read();
           if (done) break;
           buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
+          const lines = buffer.split(String.fromCharCode(10));
           buffer = lines.pop();
 
           for (const line of lines) {
@@ -2349,7 +4030,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 document.getElementById('workshopReadyBanner').style.display = 'block';
                 document.getElementById('pipelineOverallStatus').innerText = 'Ready for Steam Workshop!';
                 document.getElementById('pipelineOverallStatus').style.color = '#22c55e';
-                showToast('Anthem successfully mastered and deployed!', 'success');
+                showToast(`Batch completed! ${mvpQueue.length} anthem(s) mastered & deployed.`, 'success');
               }
             } catch (err) {}
           }
@@ -2362,18 +4043,18 @@ HTML_TEMPLATE = """<!DOCTYPE html>
           loadMvpList();
         }
       } catch (e) {
-        log('[MVP ERROR] Pipeline error: ' + e);
+        log('[MVP BATCH ERROR] Pipeline error: ' + e);
         showToast('Pipeline network error: ' + e, 'error');
       } finally {
         btn.disabled = false;
-        btn.innerText = 'Process Audio & Deploy Pipeline';
+        btn.innerText = `Convert & Deploy All to Server (${mvpQueue.length} Tracks)`;
       }
     }
 
     async function loadMvpList() {
       const tbody = document.getElementById('mvpAnthemsTableBody');
       if (!tbody) return;
-      tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; padding:18px; color:var(--text-muted);">Loading anthems from server...</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:18px; color:var(--text-muted);">Loading anthems from server...</td></tr>';
 
       try {
         const res = await fetch('/api/mvp/list');
@@ -2383,6 +4064,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             <tr>
               <td style="padding: 10px 14px; font-weight: 600; color: #fff;">${a.name}</td>
               <td style="padding: 10px 14px; font-family: 'JetBrains Mono', monospace; font-size: 0.76rem; color: #38bdf8;">${a.event}</td>
+              <td style="padding: 10px 14px; font-family: 'JetBrains Mono', monospace; font-size: 0.76rem; color: #22c55e;">${a.duration ? a.duration + 's' : '10s'}</td>
               <td style="padding: 10px 14px; font-family: 'JetBrains Mono', monospace; font-size: 0.74rem; color: var(--text-muted);">${a.path}</td>
               <td style="padding: 10px 14px; text-align: right;">
                 <button class="btn btn-sm btn-danger" onclick="deleteMvp('${a.id}', '${encodeURIComponent(a.name)}')">Delete</button>
@@ -2390,10 +4072,10 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             </tr>
           `).join('');
         } else {
-          tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; padding:18px; color:var(--text-muted);">No custom anthems registered yet.</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:18px; color:var(--text-muted);">No custom anthems registered yet.</td></tr>';
         }
       } catch (e) {
-        tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; padding:18px; color:#ef4444;">Error loading anthems: ${e}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; padding:18px; color:#ef4444;">Error loading anthems: ${e}</td></tr>`;
       }
     }
 
@@ -2426,12 +4108,21 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         true
       );
     }
-
     // Initial Load
-    window.onload = () => {
+    function initApp() {
       refreshServices();
       loadAnnouncements();
+      loadTagsAndStaff();
       loadMvpList();
+      setInterval(refreshServices, 10000);
+    }
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', initApp);
+    } else {
+      initApp();
+    }
+    window.onload = () => {
+      refreshServices();
     };
   </script>
 </body>
@@ -2461,6 +4152,74 @@ class ControlCenterHandler(BaseHTTPRequestHandler):
         pass # Suppress noisy request logs
 
     def do_GET(self):
+        if self.path.startswith("/api/audio_stream"):
+            try:
+                import urllib.parse
+                parsed = urllib.parse.urlparse(self.path)
+                query = urllib.parse.parse_qs(parsed.query)
+                file_path = query.get("path", [""])[0]
+                if not file_path or not os.path.exists(file_path):
+                    self.send_response(404)
+                    self.end_headers()
+                    return
+
+                ext = os.path.splitext(file_path)[1].lower()
+                mime_types = {
+                    ".mp3": "audio/mpeg",
+                    ".wav": "audio/wav",
+                    ".ogg": "audio/ogg",
+                    ".flac": "audio/flac",
+                    ".m4a": "audio/mp4",
+                    ".aac": "audio/aac",
+                }
+                content_type = mime_types.get(ext, "application/octet-stream")
+                file_size = os.path.getsize(file_path)
+
+                range_header = self.headers.get("Range")
+                if range_header and range_header.startswith("bytes="):
+                    range_match = re.match(r"bytes=(\d+)-(\d*)", range_header)
+                    if range_match:
+                        start = int(range_match.group(1))
+                        end = int(range_match.group(2)) if range_match.group(2) else file_size - 1
+                        end = min(end, file_size - 1)
+                        length = end - start + 1
+
+                        self.send_response(206)
+                        self.send_header("Content-Type", content_type)
+                        self.send_header("Content-Range", f"bytes {start}-{end}/{file_size}")
+                        self.send_header("Content-Length", str(length))
+                        self.send_header("Accept-Ranges", "bytes")
+                        self.send_header("Access-Control-Allow-Origin", "*")
+                        self.end_headers()
+
+                        with open(file_path, "rb") as f:
+                            f.seek(start)
+                            remaining = length
+                            while remaining > 0:
+                                chunk = f.read(min(remaining, 65536))
+                                if not chunk:
+                                    break
+                                self.wfile.write(chunk)
+                                remaining -= len(chunk)
+                        return
+
+                self.send_response(200)
+                self.send_header("Content-Type", content_type)
+                self.send_header("Content-Length", str(file_size))
+                self.send_header("Accept-Ranges", "bytes")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+
+                with open(file_path, "rb") as f:
+                    while True:
+                        chunk = f.read(65536)
+                        if not chunk:
+                            break
+                        self.wfile.write(chunk)
+            except Exception:
+                pass
+            return
+
         if self.path == "/" or self.path == "/index.html":
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -2519,6 +4278,14 @@ class ControlCenterHandler(BaseHTTPRequestHandler):
             self.send_json(results)
             return
 
+        if self.path == "/api/tags":
+            try:
+                payload = get_tags_and_staff_payload()
+                self.send_json(payload)
+            except Exception as e:
+                self.send_json({"success": False, "error": str(e), "tags": {}, "staff": []})
+            return
+
         if self.path == "/api/mvp/list":
             try:
                 ssh = get_ssh_client(timeout=10)
@@ -2533,8 +4300,9 @@ class ControlCenterHandler(BaseHTTPRequestHandler):
                     anthems.append({
                         "id": k,
                         "name": v.get("MVP_Kit_Name", k),
-                        "event": v.get("SoundEvent", ""),
-                        "path": v.get("Sound_Path_1", "")
+                        "event": v.get("SoundEvent") or v.get("Sound_Event", ""),
+                        "path": v.get("Sound_Path_1", ""),
+                        "duration": v.get("Message_Center_Bottom_InSecs", 10)
                     })
                 self.send_json({"success": True, "anthems": anthems})
             except Exception as e:
@@ -2624,6 +4392,72 @@ class ControlCenterHandler(BaseHTTPRequestHandler):
                 self.send_json({"success": False, "error": str(e)})
             return
 
+        if self.path == "/api/tags/save":
+            try:
+                new_tags = req_data.get("tags", {})
+                staff_assignments = req_data.get("staff_assignments", {})
+
+                ssh = get_ssh_client()
+                sftp = ssh.open_sftp()
+
+                with sftp.open(REMOTE_CHATMANAGER_CONFIG, 'r') as f:
+                    cm_data = json.loads(f.read().decode('utf-8'))
+                cm_data["Tags"] = new_tags
+                with sftp.open(REMOTE_CHATMANAGER_CONFIG, 'w') as f:
+                    f.write(json.dumps(cm_data, indent=2, ensure_ascii=False))
+
+                if staff_assignments:
+                    with sftp.open(REMOTE_ADMINS_CONFIG, 'r') as f:
+                        raw_admins = f.read().decode('utf-8').lstrip('\ufeff')
+                        admins_data = json.loads(raw_admins)
+
+                    for ident, chosen_group in staff_assignments.items():
+                        for entry_key, entry in admins_data.items():
+                            if str(entry.get("identity", entry_key)).strip() == ident:
+                                cur_groups = entry.get("groups", [])
+                                if chosen_group in cur_groups:
+                                    cur_groups.remove(chosen_group)
+                                    entry["groups"] = [chosen_group] + cur_groups
+                                elif chosen_group.startswith("#"):
+                                    entry["groups"] = [chosen_group] + [g for g in cur_groups if g != chosen_group]
+
+                    with sftp.open(REMOTE_ADMINS_CONFIG, 'w') as f:
+                        f.write(json.dumps(admins_data, indent=2, ensure_ascii=False))
+
+                sftp.close()
+                ssh.close()
+
+                rcon_exec("css_admins_reload")
+                rcon_exec("css_plugins reload 9")
+
+                self.send_json({"success": True, "message": "Chat tags and staff assignments hot-reloaded successfully."})
+            except Exception as e:
+                self.send_json({"success": False, "error": str(e)})
+            return
+
+        if self.path == "/api/tags/delete":
+            tag_key = req_data.get("key", "").strip()
+            if not tag_key:
+                self.send_json({"success": False, "error": "Missing tag key"})
+                return
+            try:
+                ssh = get_ssh_client()
+                sftp = ssh.open_sftp()
+                with sftp.open(REMOTE_CHATMANAGER_CONFIG, 'r') as f:
+                    cm_data = json.loads(f.read().decode('utf-8'))
+                if tag_key in cm_data.get("Tags", {}):
+                    del cm_data["Tags"][tag_key]
+                with sftp.open(REMOTE_CHATMANAGER_CONFIG, 'w') as f:
+                    f.write(json.dumps(cm_data, indent=2, ensure_ascii=False))
+                sftp.close()
+                ssh.close()
+
+                rcon_exec("css_plugins reload 9")
+                self.send_json({"success": True})
+            except Exception as e:
+                self.send_json({"success": False, "error": str(e)})
+            return
+
         if self.path == "/api/service/action":
             action = req_data.get("action")
             ssh = get_ssh_client()
@@ -2679,12 +4513,17 @@ class ControlCenterHandler(BaseHTTPRequestHandler):
                     self.send_json({"success": False, "error": "cs2.exe not found at standard Steam path."})
             except Exception as e:
                 self.send_json({"success": False, "error": str(e)})
-        if self.path == "/api/browse_audio_file":
+            return
+        if self.path in ("/api/browse_audio_file", "/api/browse_audio_files"):
             try:
-                p = browse_audio_file()
-                self.send_json({"success": True, "path": p})
+                paths = browse_audio_files(multiple=True)
+                self.send_json({
+                    "success": True,
+                    "paths": paths,
+                    "path": paths[0] if paths else ""
+                })
             except Exception as e:
-                self.send_json({"success": False, "error": str(e), "path": ""})
+                self.send_json({"success": False, "error": str(e), "paths": [], "path": ""})
             return
 
         if self.path == "/api/mvp/delete":
@@ -2716,9 +4555,18 @@ class ControlCenterHandler(BaseHTTPRequestHandler):
             return
 
         if self.path == "/api/mvp/pipeline":
-            audio_path = req_data.get("audio_path", "").strip(' "\'')
-            display_name = req_data.get("display_name", "").strip()
-            start_time = req_data.get("start_time", "00:00:00").strip()
+            tracks_data = req_data.get("tracks")
+            if not tracks_data:
+                audio_path = req_data.get("audio_path", "").strip(' "\'')
+                display_name = req_data.get("display_name", "").strip()
+                start_time = req_data.get("start_time", "00:00:00").strip()
+                duration = req_data.get("duration", 10.0)
+                tracks_data = [{
+                    "audio_path": audio_path,
+                    "display_name": display_name,
+                    "start_time": start_time,
+                    "duration": duration
+                }]
 
             self.send_response(200)
             self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
@@ -2727,7 +4575,7 @@ class ControlCenterHandler(BaseHTTPRequestHandler):
             self.end_headers()
 
             try:
-                for ev in execute_mvp_pipeline(audio_path, display_name, start_time):
+                for ev in execute_mvp_batch_pipeline(tracks_data):
                     line = json.dumps(ev, ensure_ascii=False) + "\n"
                     self.wfile.write(line.encode('utf-8'))
                     self.wfile.flush()
@@ -2744,10 +4592,13 @@ class ControlCenterHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def send_json(self, data):
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.end_headers()
-        self.wfile.write(json.dumps(data).encode('utf-8'))
+        try:
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(json.dumps(data).encode('utf-8'))
+        except (ConnectionResetError, BrokenPipeError, ConnectionAbortedError):
+            pass
 
 def open_app_window(url):
     edge_path = r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
@@ -2760,13 +4611,15 @@ def open_app_window(url):
     webbrowser.open(url)
 
 def main():
-    sys.stdout.reconfigure(encoding='utf-8')
     port = 5890
-    server = HTTPServer(("127.0.0.1", port), ControlCenterHandler)
     url = f"http://127.0.0.1:{port}"
-    
-    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
-    server_thread.start()
+    server = None
+    try:
+        server = HTTPServer(("127.0.0.1", port), ControlCenterHandler)
+        server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+        server_thread.start()
+    except OSError:
+        print(f"[*] Port {port} already listening. Re-using active server instance.")
 
     print("=" * 65)
     print("        CS2 Server Control Center (Active)")

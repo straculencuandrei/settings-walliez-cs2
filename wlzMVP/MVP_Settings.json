@@ -16,5 +16,14 @@
     "MVP_Kit_Name": "GTA III Theme",
     "Sound_Path_1": "sounds/mvp/gta_iii_full_theme_hq.vsnd",
     "Sound_Event": "CustomMVP.gta_iii_full_theme_hq"
+  },
+  "mvp_tacerea_ma_ajuta_mastered": {
+    "MVP_Kit_Name": "Tacerea Ma Ajuta (mastered)",
+    "Sound_Path_1": "sounds/mvp/tacerea_ma_ajuta_mastered.vsnd_c",
+    "SoundEvent": "CustomMVP.tacerea_ma_ajuta_mastered",
+    "CanBePreview": true,
+    "Message_Chat": true,
+    "Message_Center_Bottom": true,
+    "Message_Center_Bottom_InSecs": 10
   }
 }
